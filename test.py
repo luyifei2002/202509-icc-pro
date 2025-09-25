@@ -55,6 +55,16 @@ epsilon_decay = 0.995
 rewards = []
 losses = []
 
+################### 函数代码 ###################
+def make_exprience(graph, fail_links, env_actions, reward, done):
+    eval_link_attr, eval_path_attr, eval_mask = graph.get_features_tuple_one(fail_links, env_actions)
+    target_link_attr, target_path_attr, target_mask = [], [], []
+    if not done:
+        target_fail_flows = graph.get_fail_flows(env_actions, fail_links)
+        target_link_attr, target_path_attr, target_mask = graph.get_features_target_exprience(env_actions, target_fail_flows)
+    return eval_link_attr, eval_path_attr, eval_mask, target_link_attr, target_path_attr, target_mask, reward, done
+
+
 ################### 正式流程代码 ###################
 try:
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -137,9 +147,8 @@ try:
             else:
                 model.eval()
                 with torch.no_grad():
-                    features, new_actions_list = graph.get_features(env_actions, fail_flows, device)
-                    # print(f"features: \nlink_attr: \n{features['link_attr'].tolist()}, \npath_attr: \n{features['path_attr'].tolist()}, \nmask: \n{features['mask'].tolist()}")
-                    q_values = model(features)
+                    link_attr, path_attr, mask, new_actions_list = graph.get_features(env_actions, fail_flows, device)
+                    q_values = model(link_attr, path_attr, mask)
                     max_q_value, max_q_index = torch.max(q_values, dim=0)
                     best_actions_index = max_q_index.item()
                     env_actions = new_actions_list[best_actions_index]
@@ -165,9 +174,8 @@ try:
             print(f"\tfail_flows: \t{fail_flows}")
 
             # 记录经验池 (s, a, s', r, done)
-            # [fail_links, last_env_actions] = s    # 似乎训练中不必要
-            # [fail_links, env_actions] = s + a = s'
-            experience = (fail_links, env_actions, reward, done)
+            # 由于发现提取特征值比较慢，现在改成了直接传特征值
+            experience = make_exprience(graph, fail_links, env_actions, reward, done)
             memory.append(copy.deepcopy(experience))
 
             # ################### 训练模式 ###################
@@ -177,14 +185,12 @@ try:
                 target_model.eval()
 
                 batch = random.sample(memory, batch_size)
-                exp_fail_links, exp_env_actions, exp_rewards, exp_done = zip(*batch)
-
+                eval_link_attr, eval_path_attr, eval_mask, exp_link_attr, exp_path_attr, exp_mask, exp_rewards, exp_done = zip(*batch)
                 
                 start1 = time.perf_counter()# 计时------------
 
                 # 先获取eval的q值
-                eval_features = graph.get_features_tuple(exp_fail_links, exp_env_actions, device)
-                eval_q_values = model(eval_features)
+                eval_q_values = model(torch.tensor(eval_link_attr, device=device), torch.tensor(eval_path_attr, device=device), torch.tensor(eval_mask, device=device))
 
                 print(f"eval_q_values\t计算耗时: {(time.perf_counter() - start1) * 1000:.3f} 毫秒")
                 start1 = time.perf_counter()# 计时------------
@@ -193,8 +199,7 @@ try:
                 target_q_values_list = []
                 with torch.no_grad():
                     for i in range(len(batch)):
-                        target_env_actions = exp_env_actions[i]
-                        target_fail_links = exp_fail_links[i]
+                        target_link_attr, target_path_attr, target_mask = exp_link_attr[i], exp_path_attr[i], exp_mask[i]
                         target_reward = exp_rewards[i]
                         target_done = exp_done[i]
 
@@ -202,9 +207,7 @@ try:
                             target_q_values_list.append(target_reward)
                             continue
 
-                        target_fail_flows = graph.get_fail_flows(target_env_actions, target_fail_links)
-                        target_features, target_new_actions_list = graph.get_features(target_env_actions, target_fail_flows, device)
-                        target_q_values = target_model(target_features)
+                        target_q_values = target_model(torch.tensor(target_link_attr, device=device), torch.tensor(target_path_attr, device=device), torch.tensor(target_mask, device=device))
                         target_max_q_value, target_max_q_index = torch.max(target_q_values, dim=0)
                         target_best_value = target_max_q_value.item()
                         target_q_value = target_reward + reward_gamma * target_best_value

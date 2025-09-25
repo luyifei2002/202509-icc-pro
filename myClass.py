@@ -497,16 +497,27 @@ class m_graph:
                 mask[i][link_id] = True
         return mask
 
-    def get_features_dfs(self, cur, env_actions, fail_flows, link_attr_list, path_attr_list, mask_list, new_actions_list, link_attr_max_fail_p_list):
+    def get_features_dfs(self, 
+                         cur, 
+                         env_actions, fail_flows, 
+                         link_attr_list, path_attr_list, mask_list, 
+                         new_actions_list, 
+                         link_attr_max_fail_p_list, 
+                         tensor_flag=True):
         if cur == len(fail_flows):
             link_attr = self.get_link_attr(env_actions)
             for i in range(self.m):
                 link_attr[i].append(link_attr_max_fail_p_list[i])
                 if link_attr[i][1] < 0:
                     return
-            link_attr_list.append(torch.tensor(link_attr))
-            path_attr_list.append(torch.tensor(self.get_path_attr()))
-            mask_list.append(torch.tensor(self.get_mask(env_actions)))
+            if tensor_flag:
+                link_attr_list.append(torch.tensor(link_attr))
+                path_attr_list.append(torch.tensor(self.get_path_attr()))
+                mask_list.append(torch.tensor(self.get_mask(env_actions)))
+            else:
+                link_attr_list.append(link_attr)
+                path_attr_list.append(self.get_path_attr())
+                mask_list.append(self.get_mask(env_actions))
             new_actions_list.append(env_actions)
             return
         now_judge_flow_id = fail_flows[cur]
@@ -514,7 +525,7 @@ class m_graph:
         paths_len = min(self.K_SP_CNT, len(flow.paths))
         for i in range(paths_len):
             env_actions[now_judge_flow_id] = i
-            self.get_features_dfs(cur + 1, env_actions, fail_flows, link_attr_list, path_attr_list, mask_list, new_actions_list, link_attr_max_fail_p_list)
+            self.get_features_dfs(cur + 1, env_actions, fail_flows, link_attr_list, path_attr_list, mask_list, new_actions_list, link_attr_max_fail_p_list, tensor_flag=tensor_flag)
 
     def get_features(self, env_actions, fail_flows, device):  # env_actions: 当前环境的路径方案, fail_flows: 失效的路径id列表
         link_attr_list = []
@@ -526,14 +537,10 @@ class m_graph:
         link_attr_max_fail_p_list = self.get_link_attr_max_fail_p_list(env_actions, fail_flows)
 
         self.get_features_dfs(0, env_actions_copy, fail_flows, link_attr_list, path_attr_list, mask_list, new_actions_list, link_attr_max_fail_p_list)
-
-        features = {
-            'link_attr': torch.stack(link_attr_list).to(device),    # [batch_size, num_link, 4] [总带宽, 可用带宽, 介数, fail_p] fail_p量化了该边可能失效的可能性
-            'path_attr': torch.stack(path_attr_list).to(device),    # [batch_size, num_path, 1] [带宽]
-            'mask': torch.stack(mask_list).to(device)               # [batch_size, num_path, num_link]
-        }
-
-        return features, new_actions_list
+        # [batch_size, num_link, 4] [总带宽, 可用带宽, 介数, fail_p] fail_p量化了该边可能失效的可能性
+        # [batch_size, num_path, 1] [带宽]
+        # [batch_size, num_path, num_link]
+        return torch.stack(link_attr_list).to(device), torch.stack(path_attr_list).to(device), torch.stack(mask_list).to(device), new_actions_list
     
     def get_fail_flows(self, env_actions, fail_links):
         fail_flows = []
@@ -553,6 +560,16 @@ class m_graph:
                     break
         return fail_flows
     
+    def get_features_tuple_one(self, fail_links, env_actions):
+        fail_flows = self.get_fail_flows(env_actions, fail_links)
+        link_attr_max_fail_p_list = self.get_link_attr_max_fail_p_list(env_actions, fail_flows)
+        link_attr = self.get_link_attr(env_actions)
+        for i in range(self.m):
+            link_attr[i].append(link_attr_max_fail_p_list[i])
+        path_attr = self.get_path_attr()
+        mask = self.get_mask(env_actions)
+        return link_attr, path_attr, mask
+
     def get_features_tuple(self, fail_links_tuple, env_actions_tuple, device):
         link_attr_list = []
         path_attr_list = []
@@ -561,22 +578,26 @@ class m_graph:
         for id in range(len(fail_links_tuple)):
             fail_links = fail_links_tuple[id]
             env_actions = env_actions_tuple[id]
-            fail_flows = self.get_fail_flows(env_actions, fail_links)
-            link_attr_max_fail_p_list = self.get_link_attr_max_fail_p_list(env_actions, fail_flows)
-            link_attr = self.get_link_attr(env_actions)
-            for i in range(self.m):
-                link_attr[i].append(link_attr_max_fail_p_list[i])
-            path_attr = self.get_path_attr()
-            mask = self.get_mask(env_actions)
+            link_attr, path_attr, mask = self.get_features_tuple_one(fail_links, env_actions)
 
             link_attr_list.append(torch.tensor(link_attr))
             path_attr_list.append(torch.tensor(path_attr))
             mask_list.append(torch.tensor(mask))
 
-        features = {
-            'link_attr': torch.stack(link_attr_list).to(device),    # [batch_size, num_link, 4] [总带宽, 可用带宽, 介数, fail_p] fail_p量化了该边可能失效的可能性
-            'path_attr': torch.stack(path_attr_list).to(device),    # [batch_size, num_path, 1] [带宽]
-            'mask': torch.stack(mask_list).to(device)               # [batch_size, num_path, num_link]
-        }
+        # [batch_size, num_link, 4] [总带宽, 可用带宽, 介数, fail_p] fail_p量化了该边可能失效的可能性
+        # [batch_size, num_path, 1] [带宽]
+        # [batch_size, num_path, num_link]
+        return torch.stack(link_attr_list).to(device), torch.stack(path_attr_list).to(device), torch.stack(mask_list).to(device)
 
-        return features
+    def get_features_target_exprience(self, env_actions, fail_flows):   # make_exprience的target_exprience专用
+        link_attr_list = []
+        path_attr_list = []
+        mask_list = []
+        new_actions_list = []
+
+        env_actions_copy = copy.deepcopy(env_actions)
+        link_attr_max_fail_p_list = self.get_link_attr_max_fail_p_list(env_actions, fail_flows)
+
+        self.get_features_dfs(0, env_actions_copy, fail_flows, link_attr_list, path_attr_list, mask_list, new_actions_list, link_attr_max_fail_p_list, tensor_flag=False)
+        return link_attr_list, path_attr_list, mask_list
+    

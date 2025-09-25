@@ -101,15 +101,8 @@ class gnnLyx(nn.Module):
                 if m.bias is not None: 
                     nn.init.zeros_(m.bias)
         self.readout.apply(init_weights)  # 初始化
-    
-    
 
-    def forward(self, features):
-        link_attr = features['link_attr']
-        path_attr = features['path_attr']
-        mask = features['mask']
-
-
+    def forward(self, link_attr, path_attr, mask):
         # 1.映射层
         h_link = self.link_embed(link_attr) # [batch_size, num_link, link_dim]
         h_path = self.path_embed(path_attr) # [batch_size, num_path, path_dim]
