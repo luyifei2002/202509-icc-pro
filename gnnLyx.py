@@ -52,9 +52,9 @@ class MultiHeadGatLayer(nn.Module):
         h_A_out = [head_layer(h_A, h_B, mask) for head_layer in self.head_list] # 说是torch实际处理会当作并行
         return self.W(torch.cat(h_A_out, dim=-1))
 
-class gnn_lyx(nn.Module):
+class gnnLyx(nn.Module):
     def __init__(self, hparams):
-        super(gnn_lyx, self).__init__()
+        super(gnnLyx, self).__init__()
         self.hparams = hparams
         
         # 特征嵌入层
