@@ -124,6 +124,7 @@ try:
             if len(fail_flows) >= FAIL_FLOW_CNT_MIN and len(fail_flows) <= FAIL_FLOW_CNT_MAX:
                 break
         
+        origin_fail_flows_cnt = len(fail_flows)
         stepIdx = 0
         reward = 0
         total_reward = 0
@@ -132,7 +133,7 @@ try:
             total_step += 1
             stepIdx += 1
 
-            print(f"\nStepIdx: {stepIdx}, Total_step: {total_step}, Total_reward = {total_reward}")
+            print(f"\nStepIdx: {stepIdx}, Total_step: {total_step}, Total_reward = {total_reward}, Memory_len = {len(memory)}")
 
             last_env_actions = env_actions
             last_fail_flows = fail_flows
@@ -153,25 +154,25 @@ try:
                     best_actions_index = max_q_index.item()
                     env_actions = new_actions_list[best_actions_index]
             
-            fail_flows = graph.get_fail_flows(env_actions, fail_links)
-            reward = 1.0 * (len(last_fail_flows) - len(fail_flows))
-            if len(fail_flows) > FAIL_FLOW_CNT_MAX:                 # 操作后失效的比原来多多了, 认为done
-                done = True
-                reward = -1.0 * len(fail_flows)
-            if len(fail_flows) == 0:                                # 成功重路由, 认为done
-                done = True
-            if total_reward < -1.0 * flow_cnt:                      # 超出阈值, 认为done
-                done = True
-            if fail_flows == last_fail_flows:                       # 做出动作没任何效果, 认为done, 且由于没做出改变, 所以直接continue
-                done = True
-                continue
-            total_reward += reward
-            
             print(f"决策部分耗时: {(time.perf_counter() - start) * 1000:.3f} 毫秒")
             print(f"old\tactions: \t{last_env_actions}")
             print(f"\tfail_flows: \t{last_fail_flows}")
             print(f"new\tactions: \t{env_actions}")
             print(f"\tfail_flows: \t{fail_flows}")
+
+            fail_flows = graph.get_fail_flows(env_actions, fail_links)
+            reward = 1.0 * (len(last_fail_flows) - len(fail_flows)) / origin_fail_flows_cnt
+            total_reward += reward
+            if len(fail_flows) > origin_fail_flows_cnt:             # 操作后失效的比原来多了, 认为done
+                done = True
+            if len(fail_flows) == 0:                                # 成功重路由, 认为done
+                done = True
+            if total_reward < -1.0:                                 # 超出阈值, 认为done
+                done = True
+            if fail_flows == last_fail_flows:                       # 做出动作没任何效果, 认为done, 且由于没做出改变, 所以直接continue
+                done = True
+                continue
+            print(f"reward: {reward}, \ttotal_reward: {total_reward}")
 
             # 记录经验池 (s, a, s', r, done)
             # 由于发现提取特征值比较慢，现在改成了直接传特征值
