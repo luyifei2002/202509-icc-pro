@@ -12,7 +12,7 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import time
 
-from gnn_lyx import gnn_lyx
+from gnnLyx import gnnLyx
 import myClass
 
 ################### 初始化参数 ###################
@@ -72,8 +72,8 @@ try:
     print(f"init_env_actions: \n{init_env_actions}")
 
     # 初始化模型
-    model = gnn_lyx(hparams).to(device)
-    target_model = gnn_lyx(hparams).to(device)
+    model = gnnLyx(hparams).to(device)
+    target_model = gnnLyx(hparams).to(device)
     optimizer = optim.Adam(model.parameters(), lr=0.0001)    # 这里设置学习率
     if (eval_flag):
         model_state = torch.load("model_epoch_20000.pth", map_location=device)
