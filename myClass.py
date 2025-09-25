@@ -425,9 +425,11 @@ class m_graph:
         return link_capacity
 
     def get_link_attr_max_fail_p_list(self, env_actions, fail_flows):
-        # 两条公理：
+        # 两条公理:
         # 1. fail_path上至少有一条fail_link
         # 2. active_path上必定全部为active_link
+        # 一条假设:
+        # 1. 非active_link上经过的fail_path越多，越可能是fail_path
         link_fail_cnt = [0 for _ in range(self.m)]                          # 记录每个可能的fail_link上经过的fail_path的数量, 若值为-1表示必定为active_link
         link_attr_max_fail_p = [0 for _ in range(self.m)]                   # 按link取最大值作为该link的失效概率的特征
 
@@ -497,13 +499,10 @@ class m_graph:
                 mask[i][link_id] = True
         return mask
 
-    def get_features_dfs(self, 
-                         cur, 
-                         env_actions, fail_flows, 
+    def get_features_dfs(self, cur, env_actions, fail_flows, 
                          link_attr_list, path_attr_list, mask_list, 
-                         new_actions_list, 
-                         link_attr_max_fail_p_list, 
-                         tensor_flag=True):
+                         new_actions_list, link_attr_max_fail_p_list, 
+                         tensor_flag=True):         # 递归得到所有满足约束的疑似可行方案
         if cur == len(fail_flows):
             link_attr = self.get_link_attr(env_actions)
             for i in range(self.m):
@@ -527,19 +526,17 @@ class m_graph:
             env_actions[now_judge_flow_id] = i
             self.get_features_dfs(cur + 1, env_actions, fail_flows, link_attr_list, path_attr_list, mask_list, new_actions_list, link_attr_max_fail_p_list, tensor_flag=tensor_flag)
 
+    # link_attr:    [batch_size, num_link, 4]   [总带宽, 可用带宽, 介数, fail_p]    fail_p量化了该边可能失效的可能性
+    # path_attr:    [batch_size, num_path, 1]   [带宽]
+    # mask:         [batch_size, num_path, num_link]
     def get_features(self, env_actions, fail_flows, device):  # env_actions: 当前环境的路径方案, fail_flows: 失效的路径id列表
         link_attr_list = []
         path_attr_list = []
         mask_list = []
         new_actions_list = []
-
         env_actions_copy = copy.deepcopy(env_actions)
         link_attr_max_fail_p_list = self.get_link_attr_max_fail_p_list(env_actions, fail_flows)
-
         self.get_features_dfs(0, env_actions_copy, fail_flows, link_attr_list, path_attr_list, mask_list, new_actions_list, link_attr_max_fail_p_list)
-        # [batch_size, num_link, 4] [总带宽, 可用带宽, 介数, fail_p] fail_p量化了该边可能失效的可能性
-        # [batch_size, num_path, 1] [带宽]
-        # [batch_size, num_path, num_link]
         return torch.stack(link_attr_list).to(device), torch.stack(path_attr_list).to(device), torch.stack(mask_list).to(device), new_actions_list
     
     def get_fail_flows(self, env_actions, fail_links):
@@ -560,7 +557,7 @@ class m_graph:
                     break
         return fail_flows
     
-    def get_features_tuple_one(self, fail_links, env_actions):
+    def get_features_one(self, fail_links, env_actions):      # 计算当前环境的q值
         fail_flows = self.get_fail_flows(env_actions, fail_links)
         link_attr_max_fail_p_list = self.get_link_attr_max_fail_p_list(env_actions, fail_flows)
         link_attr = self.get_link_attr(env_actions)
@@ -570,34 +567,13 @@ class m_graph:
         mask = self.get_mask(env_actions)
         return link_attr, path_attr, mask
 
-    def get_features_tuple(self, fail_links_tuple, env_actions_tuple, device):
-        link_attr_list = []
-        path_attr_list = []
-        mask_list = []
-
-        for id in range(len(fail_links_tuple)):
-            fail_links = fail_links_tuple[id]
-            env_actions = env_actions_tuple[id]
-            link_attr, path_attr, mask = self.get_features_tuple_one(fail_links, env_actions)
-
-            link_attr_list.append(torch.tensor(link_attr))
-            path_attr_list.append(torch.tensor(path_attr))
-            mask_list.append(torch.tensor(mask))
-
-        # [batch_size, num_link, 4] [总带宽, 可用带宽, 介数, fail_p] fail_p量化了该边可能失效的可能性
-        # [batch_size, num_path, 1] [带宽]
-        # [batch_size, num_path, num_link]
-        return torch.stack(link_attr_list).to(device), torch.stack(path_attr_list).to(device), torch.stack(mask_list).to(device)
-
-    def get_features_target_exprience(self, env_actions, fail_flows):   # make_exprience的target_exprience专用
+    def get_features_target_exprience(self, env_actions, fail_flows):   # make_exprience的target_exprience专用, 计算过程和返回值不含任何torch.tensor
         link_attr_list = []
         path_attr_list = []
         mask_list = []
         new_actions_list = []
-
         env_actions_copy = copy.deepcopy(env_actions)
         link_attr_max_fail_p_list = self.get_link_attr_max_fail_p_list(env_actions, fail_flows)
-
         self.get_features_dfs(0, env_actions_copy, fail_flows, link_attr_list, path_attr_list, mask_list, new_actions_list, link_attr_max_fail_p_list, tensor_flag=False)
         return link_attr_list, path_attr_list, mask_list
     

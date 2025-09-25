@@ -57,7 +57,7 @@ losses = []
 
 ################### 函数代码 ###################
 def make_exprience(graph, fail_links, env_actions, reward, done):
-    eval_link_attr, eval_path_attr, eval_mask = graph.get_features_tuple_one(fail_links, env_actions)
+    eval_link_attr, eval_path_attr, eval_mask = graph.get_features_one(fail_links, env_actions)
     target_link_attr, target_path_attr, target_mask = [], [], []
     if not done:
         target_fail_flows = graph.get_fail_flows(env_actions, fail_links)
@@ -175,8 +175,10 @@ try:
 
             # 记录经验池 (s, a, s', r, done)
             # 由于发现提取特征值比较慢，现在改成了直接传特征值
+            start = time.perf_counter()# 计时--------------------------------------------------------------
             experience = make_exprience(graph, fail_links, env_actions, reward, done)
             memory.append(copy.deepcopy(experience))
+            print(f"经验记录耗时: {(time.perf_counter() - start) * 1000:.3f} 毫秒")
 
             # ################### 训练模式 ###################
             start = time.perf_counter()# 计时--------------------------------------------------------------
@@ -187,24 +189,21 @@ try:
                 batch = random.sample(memory, batch_size)
                 eval_link_attr, eval_path_attr, eval_mask, exp_link_attr, exp_path_attr, exp_mask, exp_rewards, exp_done = zip(*batch)
                 
-                start1 = time.perf_counter()# 计时------------
 
                 # 先获取eval的q值
                 eval_q_values = model(torch.tensor(eval_link_attr, device=device), torch.tensor(eval_path_attr, device=device), torch.tensor(eval_mask, device=device))
 
-                print(f"eval_q_values\t计算耗时: {(time.perf_counter() - start1) * 1000:.3f} 毫秒")
-                start1 = time.perf_counter()# 计时------------
-
                 # 再获取target的q值
                 target_q_values_list = []
                 with torch.no_grad():
+                    # 初始化信息, 欲分配空间
                     target_len_batch = [len(link_attr) for link_attr in exp_link_attr]
                     target_total_len = sum(target_len_batch)
                     target_link_attr_arr = np.zeros((target_total_len, m, 4), dtype=np.float32)
                     target_path_attr_arr = np.zeros((target_total_len, flow_cnt, 1), dtype=np.float32)
                     target_mask_arr = np.full((target_total_len, flow_cnt, m), False, dtype=np.bool_)
 
-                    start2 = time.perf_counter()# 计时------------
+                    # 合并batch
                     target_l = 0
                     for i in range(len(batch)):
                         target_len = target_len_batch[i]
@@ -218,15 +217,11 @@ try:
                         target_mask_arr[target_l:target_l + target_len] = target_mask_arr_temp
                         target_l += target_len
 
-                    print(f"\t\t\t合并\t计算耗时: {(time.perf_counter() - start2) * 1000:.3f} 毫秒")
-                    start2 = time.perf_counter()# 计时------------
-
+                    # 合并后的batch一次处理
                     target_q_values_batch = target_model(torch.as_tensor(target_link_attr_arr, device=device), torch.as_tensor(target_path_attr_arr, device=device), torch.as_tensor(target_mask_arr, device=device))
                     target_q_values_oringin_list = target_q_values_batch.tolist()
 
-                    print(f"\t\t\t模型\t计算耗时: {(time.perf_counter() - start2) * 1000:.3f} 毫秒")
-                    start2 = time.perf_counter()# 计时------------
-
+                    # 解包计算值
                     l = 0
                     for i in range(len(batch)):
                         target_reward = exp_rewards[i]
@@ -238,23 +233,17 @@ try:
                         target_q_value = target_reward + reward_gamma * target_max_q_value
                         target_q_values_list.append(target_q_value)
                         l += target_len_batch[i]
-                    print(f"\t\t\tQ值\t计算耗时: {(time.perf_counter() - start2) * 1000:.3f} 毫秒")
 
                 target_q_values = torch.tensor(target_q_values_list, device=device)
 
-                print(f"target_q_values\t计算耗时: {(time.perf_counter() - start1) * 1000:.3f} 毫秒")
-                start1 = time.perf_counter()# 计时------------
-
                 loss = nn.functional.mse_loss(eval_q_values, target_q_values.detach())
+                print(f"loss = {loss.item()}")
 
                 optimizer.zero_grad()# 清除梯度
                 loss.backward()# 反向传播
                 nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)# 梯度裁剪 (可选)
                 optimizer.step()# 参数更新
 
-                print(f"loss\t\t计算耗时: {(time.perf_counter() - start1) * 1000:.3f} 毫秒")
-
-                print(f"loss = {loss.item()}")
                 # 记录损失
                 losses.append(loss.item())
                 with open(save_dir_output + "losses.txt", "a") as f:
