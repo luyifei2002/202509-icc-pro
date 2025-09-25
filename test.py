@@ -194,25 +194,45 @@ try:
 
                 print(f"eval_q_values\t计算耗时: {(time.perf_counter() - start1) * 1000:.3f} 毫秒")
                 start1 = time.perf_counter()# 计时------------
+                start2 = time.perf_counter()# 计时------------
 
                 # 再获取target的q值
                 target_q_values_list = []
                 with torch.no_grad():
+                    target_len_batch = [len(link_attr) for link_attr in exp_link_attr]
+                    target_total_len = sum(target_len_batch)
+                    target_link_attr_list = []
+                    target_path_attr_list = []
+                    target_mask_list = []
+
                     for i in range(len(batch)):
-                        target_link_attr, target_path_attr, target_mask = exp_link_attr[i], exp_path_attr[i], exp_mask[i]
+                        if target_len_batch[i] != 0:
+                            target_link_attr_list.append(torch.tensor(exp_link_attr[i]))
+                            target_path_attr_list.append(torch.tensor(exp_path_attr[i]))
+                            target_mask_list.append(torch.tensor(exp_mask[i]))
+
+                    print(f"\t\t\t合并\t计算耗时: {(time.perf_counter() - start2) * 1000:.3f} 毫秒")
+                    start2 = time.perf_counter()# 计时------------
+
+                    target_q_values_batch = target_model(torch.cat(target_link_attr_list, dim=0).to(device), torch.cat(target_path_attr_list, dim=0).to(device), torch.cat(target_mask_list, dim=0).to(device))
+                    target_q_values_oringin_list = target_q_values_batch.tolist()
+
+                    print(f"\t\t\t模型\t计算耗时: {(time.perf_counter() - start2) * 1000:.3f} 毫秒")
+                    start2 = time.perf_counter()# 计时------------
+
+                    l = 0
+                    for i in range(len(batch)):
                         target_reward = exp_rewards[i]
                         target_done = exp_done[i]
-
                         if target_done:
                             target_q_values_list.append(target_reward)
                             continue
-
-                        target_q_values = target_model(torch.tensor(target_link_attr, device=device), torch.tensor(target_path_attr, device=device), torch.tensor(target_mask, device=device))
-                        target_max_q_value, target_max_q_index = torch.max(target_q_values, dim=0)
-                        target_best_value = target_max_q_value.item()
-                        target_q_value = target_reward + reward_gamma * target_best_value
-
+                        target_max_q_value = max([target_q_values_oringin_list[l + j] for j in range(target_len_batch[i])])
+                        target_q_value = target_reward + reward_gamma * target_max_q_value
                         target_q_values_list.append(target_q_value)
+                        l += target_len_batch[i]
+                    print(f"\t\t\tQ值\t计算耗时: {(time.perf_counter() - start2) * 1000:.3f} 毫秒")
+
                 target_q_values = torch.tensor(target_q_values_list, device=device)
 
                 print(f"target_q_values\t计算耗时: {(time.perf_counter() - start1) * 1000:.3f} 毫秒")
