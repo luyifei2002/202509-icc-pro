@@ -159,9 +159,9 @@ try:
             total_reward += reward
             
             print(f"决策部分耗时: {(time.perf_counter() - start) * 1000:.3f} 毫秒")
-            print(f"old\tactions: \t\t{last_env_actions}")
+            print(f"old\tactions: \t{last_env_actions}")
             print(f"\tfail_flows: \t{last_fail_flows}")
-            print(f"new\tactions: \t\t{env_actions}")
+            print(f"new\tactions: \t{env_actions}")
             print(f"\tfail_flows: \t{fail_flows}")
 
             # 记录经验池 (s, a, s', r, done)
@@ -179,9 +179,15 @@ try:
                 batch = random.sample(memory, batch_size)
                 exp_fail_links, exp_env_actions, exp_rewards, exp_done = zip(*batch)
 
+                
+                start1 = time.perf_counter()# 计时------------
+
                 # 先获取eval的q值
                 eval_features = graph.get_features_tuple(exp_fail_links, exp_env_actions, device)
                 eval_q_values = model(eval_features)
+
+                print(f"eval_q_values\t计算耗时: {(time.perf_counter() - start1) * 1000:.3f} 毫秒")
+                start1 = time.perf_counter()# 计时------------
 
                 # 再获取target的q值
                 target_q_values_list = []
@@ -206,14 +212,19 @@ try:
                         target_q_values_list.append(target_q_value)
                 target_q_values = torch.tensor(target_q_values_list, device=device)
 
+                print(f"target_q_values\t计算耗时: {(time.perf_counter() - start1) * 1000:.3f} 毫秒")
+                start1 = time.perf_counter()# 计时------------
+
                 loss = nn.functional.mse_loss(eval_q_values, target_q_values.detach())
-                print(f"loss = {loss.item()}")
 
                 optimizer.zero_grad()# 清除梯度
                 loss.backward()# 反向传播
                 nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)# 梯度裁剪 (可选)
                 optimizer.step()# 参数更新
 
+                print(f"loss\t\t计算耗时: {(time.perf_counter() - start1) * 1000:.3f} 毫秒")
+
+                print(f"loss = {loss.item()}")
                 # 记录损失
                 losses.append(loss.item())
                 with open(save_dir_output + "losses.txt", "a") as f:
