@@ -502,6 +502,8 @@ class m_graph:
             link_attr = self.get_link_attr(env_actions)
             for i in range(self.m):
                 link_attr[i].append(link_attr_max_fail_p_list[i])
+                if link_attr[i][1] < 0:
+                    return
             link_attr_list.append(torch.tensor(link_attr))
             path_attr_list.append(torch.tensor(self.get_path_attr()))
             mask_list.append(torch.tensor(self.get_mask(env_actions)))
