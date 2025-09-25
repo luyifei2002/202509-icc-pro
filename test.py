@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import numpy as np
 import random
 from collections import deque
 import os
@@ -194,27 +194,34 @@ try:
 
                 print(f"eval_q_values\t计算耗时: {(time.perf_counter() - start1) * 1000:.3f} 毫秒")
                 start1 = time.perf_counter()# 计时------------
-                start2 = time.perf_counter()# 计时------------
 
                 # 再获取target的q值
                 target_q_values_list = []
                 with torch.no_grad():
                     target_len_batch = [len(link_attr) for link_attr in exp_link_attr]
                     target_total_len = sum(target_len_batch)
-                    target_link_attr_list = []
-                    target_path_attr_list = []
-                    target_mask_list = []
+                    target_link_attr_arr = np.zeros((target_total_len, m, 4), dtype=np.float32)
+                    target_path_attr_arr = np.zeros((target_total_len, flow_cnt, 1), dtype=np.float32)
+                    target_mask_arr = np.full((target_total_len, flow_cnt, m), False, dtype=np.bool_)
 
+                    start2 = time.perf_counter()# 计时------------
+                    target_l = 0
                     for i in range(len(batch)):
-                        if target_len_batch[i] != 0:
-                            target_link_attr_list.append(torch.tensor(exp_link_attr[i]))
-                            target_path_attr_list.append(torch.tensor(exp_path_attr[i]))
-                            target_mask_list.append(torch.tensor(exp_mask[i]))
+                        target_len = target_len_batch[i]
+                        if target_len == 0:
+                            continue
+                        target_link_attr_arr_temp = np.array(exp_link_attr[i], dtype=np.float32).reshape(target_len, m, 4)
+                        target_path_attr_arr_temp = np.array(exp_path_attr[i], dtype=np.float32).reshape(target_len, flow_cnt, 1)
+                        target_mask_arr_temp = np.array(exp_mask[i], dtype=np.bool_).reshape(target_len, flow_cnt, m)
+                        target_link_attr_arr[target_l:target_l + target_len] = target_link_attr_arr_temp
+                        target_path_attr_arr[target_l:target_l + target_len] = target_path_attr_arr_temp
+                        target_mask_arr[target_l:target_l + target_len] = target_mask_arr_temp
+                        target_l += target_len
 
                     print(f"\t\t\t合并\t计算耗时: {(time.perf_counter() - start2) * 1000:.3f} 毫秒")
                     start2 = time.perf_counter()# 计时------------
 
-                    target_q_values_batch = target_model(torch.cat(target_link_attr_list, dim=0).to(device), torch.cat(target_path_attr_list, dim=0).to(device), torch.cat(target_mask_list, dim=0).to(device))
+                    target_q_values_batch = target_model(torch.as_tensor(target_link_attr_arr, device=device), torch.as_tensor(target_path_attr_arr, device=device), torch.as_tensor(target_mask_arr, device=device))
                     target_q_values_oringin_list = target_q_values_batch.tolist()
 
                     print(f"\t\t\t模型\t计算耗时: {(time.perf_counter() - start2) * 1000:.3f} 毫秒")
