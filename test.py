@@ -154,7 +154,7 @@ try:
                 reward = -1.0 * len(fail_flows) / (1 - reward_gamma)
             if len(fail_flows) == 0:
                 done = True
-            if reward < -1.0 * flow_cnt / (1 - reward_gamma):
+            if total_reward < -1.0 * flow_cnt / (1 - reward_gamma):
                 done = True
             total_reward += reward
             
