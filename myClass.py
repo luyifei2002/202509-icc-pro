@@ -502,9 +502,9 @@ class m_graph:
             link_attr = self.get_link_attr(env_actions)
             for i in range(self.m):
                 link_attr[i].append(link_attr_max_fail_p_list[i])
-            link_attr_list.append(link_attr)
-            path_attr_list.append(self.get_path_attr())
-            mask_list.append(self.get_mask(env_actions))
+            link_attr_list.append(torch.tensor(link_attr))
+            path_attr_list.append(torch.tensor(self.get_path_attr()))
+            mask_list.append(torch.tensor(self.get_mask(env_actions)))
             new_actions_list.append(env_actions)
             return
         now_judge_flow_id = fail_flows[cur]
@@ -526,9 +526,9 @@ class m_graph:
         self.get_features_dfs(0, env_actions_copy, fail_flows, link_attr_list, path_attr_list, mask_list, new_actions_list, link_attr_max_fail_p_list)
 
         features = {
-            'link_attr': torch.tensor(link_attr_list, device=device),   # [batch_size, num_link, 4] [总带宽, 可用带宽, 介数, fail_p] fail_p量化了该边可能失效的可能性
-            'path_attr': torch.tensor(path_attr_list, device=device),   # [batch_size, num_path, 1] [带宽]
-            'mask': torch.tensor(mask_list, device=device)              # [batch_size, num_path, num_link]
+            'link_attr': torch.stack(link_attr_list).to(device),    # [batch_size, num_link, 4] [总带宽, 可用带宽, 介数, fail_p] fail_p量化了该边可能失效的可能性
+            'path_attr': torch.stack(path_attr_list).to(device),    # [batch_size, num_path, 1] [带宽]
+            'mask': torch.stack(mask_list).to(device)               # [batch_size, num_path, num_link]
         }
 
         return features, new_actions_list
@@ -567,14 +567,14 @@ class m_graph:
             path_attr = self.get_path_attr()
             mask = self.get_mask(env_actions)
 
-            link_attr_list.append(link_attr)
-            path_attr_list.append(path_attr)
-            mask_list.append(mask)
-        
+            link_attr_list.append(torch.tensor(link_attr))
+            path_attr_list.append(torch.tensor(path_attr))
+            mask_list.append(torch.tensor(mask))
+
         features = {
-            'link_attr': torch.tensor(link_attr_list, device=device),   # [batch_size, num_link, 4] [总带宽, 可用带宽, 介数, fail_p] fail_p量化了该边可能失效的可能性
-            'path_attr': torch.tensor(path_attr_list, device=device),   # [batch_size, num_path, 1] [带宽]
-            'mask': torch.tensor(mask_list, device=device)              # [batch_size, num_path, num_link]
+            'link_attr': torch.stack(link_attr_list).to(device),    # [batch_size, num_link, 4] [总带宽, 可用带宽, 介数, fail_p] fail_p量化了该边可能失效的可能性
+            'path_attr': torch.stack(path_attr_list).to(device),    # [batch_size, num_path, 1] [带宽]
+            'mask': torch.stack(mask_list).to(device)               # [batch_size, num_path, num_link]
         }
 
         return features

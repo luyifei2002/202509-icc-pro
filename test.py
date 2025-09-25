@@ -81,6 +81,8 @@ try:
     target_model.load_state_dict(model.state_dict())    # 初始参数相同
     # torch.autograd.set_detect_anomaly(True)             # 调试时开启
 
+    print(f"model_device: {next(model.parameters()).device}") # 输出：cpu 或 cuda:0
+
     # 初始化变量
     n, m, flow_cnt = graph.n, graph.m, graph.f
     k = myClass.m_graph.K_SP_CNT
@@ -125,7 +127,7 @@ try:
             total_step += 1
             stepIdx += 1
 
-            print(f"\nStepIdx: {stepIdx}, Total_step: {total_step}")
+            print(f"\nStepIdx: {stepIdx}, Total_step: {total_step}, Total_reward = {total_reward}")
 
             last_env_actions = env_actions
             last_fail_flows = fail_flows
@@ -148,22 +150,25 @@ try:
                     env_actions = new_actions_list[best_actions_index]
             
             fail_flows = graph.get_fail_flows(env_actions, fail_links)
-            reward =  -1.0 * len(fail_flows)
-            if len(fail_flows) > FAIL_FLOW_CNT_MAX:
+            reward = 1.0 * (len(last_fail_flows) - len(fail_flows))
+            if len(fail_flows) > FAIL_FLOW_CNT_MAX:                 # 操作后失效的比原来多多了, 认为done
                 done = True
-                reward = -1.0 * len(fail_flows) / (1 - reward_gamma)
-            if len(fail_flows) == 0:
+                reward = -1.0 * len(fail_flows)
+            if len(fail_flows) == 0:                                # 成功重路由, 认为done
                 done = True
-            if total_reward < -1.0 * flow_cnt / (1 - reward_gamma):
+            if total_reward < -1.0 * flow_cnt:                      # 超出阈值, 认为done
                 done = True
+            if fail_flows == last_fail_flows:                       # 做出动作没任何效果, 认为done, 且由于没做出改变, 所以直接continue
+                done = True
+                continue
             total_reward += reward
             
             print(f"决策部分耗时: {(time.perf_counter() - start) * 1000:.3f} 毫秒")
             start = time.perf_counter()# 计时--------------------------------------------------------------
-            print(f"old actions: \n\t{last_env_actions}")
-            print(f"\told fail_flows: {last_fail_flows}")
-            print(f"new actions: \n\t{env_actions}")
-            print(f"\tnew fail_flows: {fail_flows}")
+            print(f"old\tactions: \t\t{last_env_actions}")
+            print(f"\tfail_flows: \t{last_fail_flows}")
+            print(f"new\tactions: \t\t{env_actions}")
+            print(f"\tfail_flows: \t{fail_flows}")
 
             # 记录经验池 (s, a, s', r, done)
             # [fail_links, last_env_actions] = s    # 似乎训练中不必要
