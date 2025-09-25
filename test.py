@@ -46,10 +46,10 @@ reward_gamma = 0.95     # reward 计算参数
 eval_flag = False       # True: 推理模式,   False: 训练模式
 
 # 贪心参数
-epsilon = 0.9
-epsilon_init = 0.9
-epsilon_min = 0.0005
-epsilon_decay = 0.99
+epsilon = 1.0
+epsilon_min = 0.001
+epsilon_decay = 0.995
+# 当前需要ln(0.001/1.0)/ln(0.995) = 1378轮
 
 # 记录list
 rewards = []
@@ -67,14 +67,14 @@ try:
 
     # 读入拓扑
     graph = myClass.m_graph()
-    init_env_actions = graph.initial_generate_ba(10, 2)
+    init_env_actions = graph.initial_generate_ba(100, 2)
     print(f"n = {graph.n}, m = {graph.m}, f = {graph.f}")
     print(f"init_env_actions: \n{init_env_actions}")
 
     # 初始化模型
     model = gnnLyx(hparams).to(device)
     target_model = gnnLyx(hparams).to(device)
-    optimizer = optim.Adam(model.parameters(), lr=0.0001)    # 这里设置学习率
+    optimizer = optim.Adam(model.parameters(), lr=0.001)    # 这里设置学习率
     if (eval_flag):
         model_state = torch.load("model_epoch_20000.pth", map_location=device)
         model.load_state_dict(model_state)
@@ -91,7 +91,7 @@ try:
     episodes = 2000     # 跑多少轮
     total_step = 0
     FAIL_LINK_CNT_MIN, FAIL_LINK_CNT_MAX = 2, 5
-    FAIL_FLOW_CNT_MIN, FAIL_FLOW_CNT_MAX = 3, 6
+    FAIL_FLOW_CNT_MIN, FAIL_FLOW_CNT_MAX = 1, 5
 
     # ################### 强化学习 ###################
     # 环境: [env_actions + fail_links] -> fail_flows
@@ -114,11 +114,6 @@ try:
             if len(fail_flows) >= FAIL_FLOW_CNT_MIN and len(fail_flows) <= FAIL_FLOW_CNT_MAX:
                 break
         
-        # 如果是训练模式，初始化贪心epsilon
-        if eval_flag == False:
-            epsilon = epsilon_init
-        else:
-            epsilon = 0
         stepIdx = 0
         reward = 0
         total_reward = 0
@@ -134,13 +129,13 @@ try:
 
             # ################### 推理模式 ###################
             start = time.perf_counter()# 计时--------------------------------------------------------------
-            model.eval()
             if np.random.rand() < epsilon and eval_flag == False:
                 for flow_id in fail_flows:
                     path_cnt = min(k, len(graph.flows[flow_id].paths))
                     env_actions[flow_id] = random.randint(0, path_cnt - 1)
                 print("Random Process")
             else:
+                model.eval()
                 with torch.no_grad():
                     features, new_actions_list = graph.get_features(env_actions, fail_flows, device)
                     # print(f"features: \nlink_attr: \n{features['link_attr'].tolist()}, \npath_attr: \n{features['path_attr'].tolist()}, \nmask: \n{features['mask'].tolist()}")
@@ -164,7 +159,6 @@ try:
             total_reward += reward
             
             print(f"决策部分耗时: {(time.perf_counter() - start) * 1000:.3f} 毫秒")
-            start = time.perf_counter()# 计时--------------------------------------------------------------
             print(f"old\tactions: \t\t{last_env_actions}")
             print(f"\tfail_flows: \t{last_fail_flows}")
             print(f"new\tactions: \t\t{env_actions}")
@@ -177,6 +171,7 @@ try:
             memory.append(copy.deepcopy(experience))
 
             # ################### 训练模式 ###################
+            start = time.perf_counter()# 计时--------------------------------------------------------------
             if len(memory) > batch_size and eval_flag == False:
                 model.train()
                 target_model.eval()
@@ -225,7 +220,6 @@ try:
                     f.write(f"{total_step},{loss}\n")
             
             print(f"训练部分耗时: {(time.perf_counter() - start) * 1000:.3f} 毫秒")
-            start = time.perf_counter()# 计时--------------------------------------------------------------
             
             # 同步参数到另一个网络
             if total_step % target_model_update_freq == 0:
