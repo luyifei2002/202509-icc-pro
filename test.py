@@ -64,11 +64,14 @@ def make_exprience(graph, fail_links, env_actions, reward, done):
         target_link_attr, target_path_attr, target_mask = graph.get_features_target_exprience(env_actions, target_fail_flows)
     return eval_link_attr, eval_path_attr, eval_mask, target_link_attr, target_path_attr, target_mask, reward, done
 
+def print_current_time():
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"start time : {current_time}:\n")
 
 ################### 正式流程代码 ###################
 try:
-    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"start time : {current_time}:\n")
+    print_current_time()
+
     # 初始化覆盖txt
     with open(save_dir_output + "losses.txt", "w") as f:
         f.write(f"")
@@ -98,9 +101,9 @@ try:
     k = myClass.m_graph.K_SP_CNT
 
     # 初始化参数
-    episodes = 2000     # 跑多少轮
+    episodes = 20000     # 跑多少轮
     total_step = 0
-    FAIL_LINK_CNT_MIN, FAIL_LINK_CNT_MAX = 2, 5
+    FAIL_LINK_CNT_MIN, FAIL_LINK_CNT_MAX = 1, 4
     FAIL_FLOW_CNT_MIN, FAIL_FLOW_CNT_MAX = 1, 5
 
     # ################### 强化学习 ###################
@@ -161,7 +164,7 @@ try:
             print(f"\tfail_flows: \t{fail_flows}")
 
             fail_flows = graph.get_fail_flows(env_actions, fail_links)
-            reward = 1.0 * (len(last_fail_flows) - len(fail_flows)) / origin_fail_flows_cnt
+            reward = 1.0 * (len(last_fail_flows) - len(fail_flows)) / origin_fail_flows_cnt / stepIdx
             total_reward += reward
             if len(fail_flows) > origin_fail_flows_cnt:             # 操作后失效的比原来多了, 认为done
                 done = True
@@ -274,4 +277,5 @@ try:
 except KeyboardInterrupt:
     print("Ctrl-C -> Exit")
 finally:
+    print_current_time()
     print("Done")
