@@ -40,8 +40,8 @@ hparams = {
 # 训练参数
 memory = deque(maxlen=2000)
 batch_size = 32
-target_model_update_freq = 500      # 目标网络更新频率
-target_model_save_freq = 2500        # 目标网络保存频率
+target_model_update_freq = 1000      # 目标网络更新频率
+target_model_save_freq = 5000        # 目标网络保存频率
 reward_gamma = 0.95     # reward 计算参数
 eval_flag = False       # True: 推理模式,   False: 训练模式
 
@@ -107,7 +107,7 @@ try:
     # 初始化模型
     model = gnnLyx(hparams).to(device)
     target_model = gnnLyx(hparams).to(device)
-    optimizer = optim.Adam(model.parameters(), lr=0.00007)    # 这里设置学习率
+    optimizer = optim.Adam(model.parameters(), lr=0.00005)    # 这里设置学习率
     if (eval_flag):
         model_state = torch.load("model_epoch_20000.pth", map_location=device)
         model.load_state_dict(model_state)
@@ -121,10 +121,10 @@ try:
     k = myClass.m_graph.K_SP_CNT
 
     # 初始化参数
-    episodes = 500000     # 跑多少轮
+    episodes = 1000000     # 跑多少轮
     total_step = 0
-    FAIL_LINK_CNT_MIN, FAIL_LINK_CNT_MAX = 1, 4
-    FAIL_FLOW_CNT_MIN, FAIL_FLOW_CNT_MAX = 1, 5
+    FAIL_LINK_CNT_MIN, FAIL_LINK_CNT_MAX = 1, 3
+    FAIL_FLOW_CNT_MIN, FAIL_FLOW_CNT_MAX = 2, 5
 
     # ################### 强化学习 ###################
     # 环境: [env_actions + fail_links] -> fail_flows

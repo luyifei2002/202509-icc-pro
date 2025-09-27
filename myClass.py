@@ -51,7 +51,7 @@ class m_ksp_node2:
         return self.d + self.H[self.v] < other.d + self.H[other.v]
 
 class m_graph:
-    K_SP_CNT = 4 # 最短路数量参数
+    K_SP_CNT = 5 # 最短路数量参数
     LINK_BW_MIN = 6
     LINK_BW_MAX = 12
     LINK_DELAY_MIN = 100
@@ -539,6 +539,7 @@ class m_graph:
         env_actions_copy = copy.deepcopy(env_actions)
         link_attr_max_fail_p_list = self.get_link_attr_max_fail_p_list(env_actions, fail_flows)
         self.get_features_dfs(0, env_actions_copy, fail_flows, link_attr_list, path_attr_list, mask_list, new_actions_list, link_attr_max_fail_p_list)
+        print(f"actions_cnt: {len(new_actions_list)}")
         return torch.stack(link_attr_list).to(device), torch.stack(path_attr_list).to(device), torch.stack(mask_list).to(device), new_actions_list
     
     def get_fail_flows(self, env_actions, fail_links):
