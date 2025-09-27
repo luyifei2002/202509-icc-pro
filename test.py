@@ -40,8 +40,8 @@ hparams = {
 # 训练参数
 memory = deque(maxlen=2000)
 batch_size = 32
-target_model_update_freq = 100      # 目标网络更新频率
-target_model_save_freq = 500        # 目标网络保存频率
+target_model_update_freq = 500      # 目标网络更新频率
+target_model_save_freq = 2500        # 目标网络保存频率
 reward_gamma = 0.95     # reward 计算参数
 eval_flag = False       # True: 推理模式,   False: 训练模式
 
@@ -91,6 +91,8 @@ try:
     if (eval_flag):
         model_state = torch.load("model_epoch_20000.pth", map_location=device)
         model.load_state_dict(model_state)
+    model_state = torch.load("model_epoch_144000.pth", map_location=device)
+    model.load_state_dict(model_state)
     target_model.load_state_dict(model.state_dict())    # 初始参数相同
     # torch.autograd.set_detect_anomaly(True)             # 调试时开启
 
@@ -101,7 +103,7 @@ try:
     k = myClass.m_graph.K_SP_CNT
 
     # 初始化参数
-    episodes = 20000     # 跑多少轮
+    episodes = 500000     # 跑多少轮
     total_step = 0
     FAIL_LINK_CNT_MIN, FAIL_LINK_CNT_MAX = 1, 4
     FAIL_FLOW_CNT_MIN, FAIL_FLOW_CNT_MAX = 1, 5
@@ -157,15 +159,17 @@ try:
                     best_actions_index = max_q_index.item()
                     env_actions = new_actions_list[best_actions_index]
             
+            fail_flows = graph.get_fail_flows(env_actions, fail_links)
+            reward = 1.0 * (len(last_fail_flows) - len(fail_flows)) / origin_fail_flows_cnt / stepIdx
+            total_reward += reward
+
             print(f"决策部分耗时: {(time.perf_counter() - start) * 1000:.3f} 毫秒")
             print(f"old\tactions: \t{last_env_actions}")
             print(f"\tfail_flows: \t{last_fail_flows}")
             print(f"new\tactions: \t{env_actions}")
             print(f"\tfail_flows: \t{fail_flows}")
 
-            fail_flows = graph.get_fail_flows(env_actions, fail_links)
-            reward = 1.0 * (len(last_fail_flows) - len(fail_flows)) / origin_fail_flows_cnt / stepIdx
-            total_reward += reward
+            memory_flag = True
             if len(fail_flows) > origin_fail_flows_cnt:             # 操作后失效的比原来多了, 认为done
                 done = True
             if len(fail_flows) == 0:                                # 成功重路由, 认为done
@@ -174,14 +178,15 @@ try:
                 done = True
             if fail_flows == last_fail_flows:                       # 做出动作没任何效果, 认为done, 且由于没做出改变, 所以直接continue
                 done = True
-                continue
+                memory_flag = False
             print(f"reward: {reward}, \ttotal_reward: {total_reward}")
 
             # 记录经验池 (s, a, s', r, done)
             # 由于发现提取特征值比较慢，现在改成了直接传特征值
             start = time.perf_counter()# 计时--------------------------------------------------------------
-            experience = make_exprience(graph, fail_links, env_actions, reward, done)
-            memory.append(copy.deepcopy(experience))
+            if memory_flag:
+                experience = make_exprience(graph, fail_links, env_actions, reward, done)
+                memory.append(copy.deepcopy(experience))
             print(f"经验记录耗时: {(time.perf_counter() - start) * 1000:.3f} 毫秒")
 
             # ################### 训练模式 ###################
