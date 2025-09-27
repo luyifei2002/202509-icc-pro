@@ -434,9 +434,9 @@ class m_graph:
         link_attr_max_fail_p = [0 for _ in range(self.m)]                   # 按link取最大值作为该link的失效概率的特征
 
         # 1、确定所有path
-        is_fail_path = [0 for _ in range(self.f)]
-        for id in range(len(fail_flows)):
-            is_fail_path[id] = 1
+        is_fail_path = [False for _ in range(self.f)]
+        for id in fail_flows:
+            is_fail_path[id] = True
 
         # 2、确定所有active_link
         for i in range(self.f):
@@ -456,18 +456,20 @@ class m_graph:
                 link_id = self.get_edgeId_by_node(fail_path[j], fail_path[j + 1])
                 if link_fail_cnt[link_id] != -1:
                     link_fail_cnt[link_id] += 1
+        for i in range(self.m):
+            if link_fail_cnt[i] == 0:
+                link_fail_cnt[i] = -1
 
         # 4、计算每个fail_path的softmax(link_fail_cnt)作为每个fail_path中的每条link的失效概率
         for i in range(self.f):
             if not is_fail_path[i]:
                 continue
             fail_path = self.flows[i].paths[env_actions[i]]
-            path_fail_cnt = [0 for _ in range(self.m)]
+            path_fail_cnt = [-1e30 for _ in range(self.m)]# 当作-inf
             for j in range(len(fail_path) - 1):
                 link_id = self.get_edgeId_by_node(fail_path[j], fail_path[j + 1])
                 if link_fail_cnt[link_id] != -1:
                     path_fail_cnt[link_id] = link_fail_cnt[link_id]
-                else: path_fail_cnt[link_id] = -1e30  # 当作-inf
             path_fail_cnt_array = np.array(path_fail_cnt)
             e_x = np.exp(path_fail_cnt_array - np.max(path_fail_cnt_array))
             softmax_x = e_x / np.sum(e_x)

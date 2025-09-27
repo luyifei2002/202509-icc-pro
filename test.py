@@ -68,6 +68,26 @@ def print_current_time():
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"start time : {current_time}:\n")
 
+def test_maxp(graph : myClass.m_graph, env_actions, fail_links):
+    fail_flows = graph.get_fail_flows(env_actions, fail_links)
+    print(f"fail_flows_id: {fail_flows}")
+    print(f"fail_flows_path_link_id:")
+    for flow_id in fail_flows:
+        path = graph.flows[flow_id].paths[env_actions[flow_id]]
+        print(f"flow {flow_id}: ")
+        for i in range(len(path) - 1):
+            link_id = graph.get_edgeId_by_node(path[i], path[i + 1])
+            print(link_id, end=", ")
+        print()
+
+    max_p_list = graph.get_link_attr_max_fail_p_list(env_actions, fail_flows)
+    indexed = [(value, idx) for idx, value in enumerate(max_p_list)]
+    sorted_list = sorted(indexed, key=lambda x: x[0], reverse=True)
+    print(f"fail_links: {fail_links}")
+    for value, idx in sorted_list:
+        print(f"idx: {idx},\tvalue: {value}")
+    return
+
 ################### 正式流程代码 ###################
 try:
     print_current_time()
@@ -87,7 +107,7 @@ try:
     # 初始化模型
     model = gnnLyx(hparams).to(device)
     target_model = gnnLyx(hparams).to(device)
-    optimizer = optim.Adam(model.parameters(), lr=0.001)    # 这里设置学习率
+    optimizer = optim.Adam(model.parameters(), lr=0.00007)    # 这里设置学习率
     if (eval_flag):
         model_state = torch.load("model_epoch_20000.pth", map_location=device)
         model.load_state_dict(model_state)
@@ -244,6 +264,8 @@ try:
                         l += target_len_batch[i]
 
                 target_q_values = torch.tensor(target_q_values_list, device=device)
+
+                print(f"eval_q: {eval_q_values}\ntarg_q: {target_q_values}")
 
                 loss = nn.functional.mse_loss(eval_q_values, target_q_values.detach())
                 print(f"loss = {loss.item()}")
