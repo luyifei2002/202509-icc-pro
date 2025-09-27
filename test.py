@@ -111,8 +111,6 @@ try:
     if (eval_flag):
         model_state = torch.load("model_epoch_20000.pth", map_location=device)
         model.load_state_dict(model_state)
-    model_state = torch.load("model_epoch_144000.pth", map_location=device)
-    model.load_state_dict(model_state)
     target_model.load_state_dict(model.state_dict())    # 初始参数相同
     # torch.autograd.set_detect_anomaly(True)             # 调试时开启
 
