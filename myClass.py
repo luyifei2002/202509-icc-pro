@@ -519,7 +519,7 @@ class m_graph:
                 link_attr_list.append(link_attr)
                 path_attr_list.append(self.get_path_attr())
                 mask_list.append(self.get_mask(env_actions))
-            new_actions_list.append(env_actions)
+            new_actions_list.append(copy.deepcopy(env_actions))
             return
         now_judge_flow_id = fail_flows[cur]
         flow = self.flows[now_judge_flow_id]

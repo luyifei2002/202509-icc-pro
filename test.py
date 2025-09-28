@@ -164,9 +164,8 @@ try:
             # ################### 推理模式 ###################
             start = time.perf_counter()# 计时--------------------------------------------------------------
             if np.random.rand() < epsilon and eval_flag == False:
-                for flow_id in fail_flows:
-                    path_cnt = min(k, len(graph.flows[flow_id].paths))
-                    env_actions[flow_id] = random.randint(0, path_cnt - 1)
+                _, _, _, new_actions_list = graph.get_features(env_actions, fail_flows, device)
+                env_actions = new_actions_list[random.randint(0, len(new_actions_list))]
                 print("Random Process")
             else:
                 model.eval()
