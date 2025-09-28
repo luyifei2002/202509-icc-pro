@@ -165,7 +165,7 @@ try:
             start = time.perf_counter()# 计时--------------------------------------------------------------
             if np.random.rand() < epsilon and eval_flag == False:
                 _, _, _, new_actions_list = graph.get_features(env_actions, fail_flows, device)
-                env_actions = new_actions_list[random.randint(0, len(new_actions_list))]
+                env_actions = new_actions_list[random.randint(0, len(new_actions_list) - 1)]
                 print("Random Process")
             else:
                 model.eval()
