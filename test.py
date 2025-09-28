@@ -58,11 +58,7 @@ losses = []
 ################### 函数代码 ###################
 def make_exprience(graph, fail_links, env_actions, reward, done):
     eval_link_attr, eval_path_attr, eval_mask = graph.get_features_one(fail_links, env_actions)
-    target_link_attr, target_path_attr, target_mask = [], [], []
-    if not done:
-        target_fail_flows = graph.get_fail_flows(env_actions, fail_links)
-        target_link_attr, target_path_attr, target_mask = graph.get_features_target_exprience(env_actions, target_fail_flows)
-    return eval_link_attr, eval_path_attr, eval_mask, target_link_attr, target_path_attr, target_mask, reward, done
+    return eval_link_attr, eval_path_attr, eval_mask, reward, done
 
 def print_current_time():
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -177,7 +173,7 @@ try:
                     env_actions = new_actions_list[best_actions_index]
             
             fail_flows = graph.get_fail_flows(env_actions, fail_links)
-            reward = 1.0 * (len(last_fail_flows) - len(fail_flows)) / origin_fail_flows_cnt / stepIdx
+            reward = 1.0 * (len(last_fail_flows) - len(fail_flows)) / origin_fail_flows_cnt
             total_reward += reward
 
             print(f"决策部分耗时: {(time.perf_counter() - start) * 1000:.3f} 毫秒")
@@ -213,54 +209,14 @@ try:
                 target_model.eval()
 
                 batch = random.sample(memory, batch_size)
-                eval_link_attr, eval_path_attr, eval_mask, exp_link_attr, exp_path_attr, exp_mask, exp_rewards, exp_done = zip(*batch)
+                eval_link_attr, eval_path_attr, eval_mask, exp_rewards, exp_done = zip(*batch)
                 
 
                 # 先获取eval的q值
                 eval_q_values = model(torch.tensor(eval_link_attr, device=device), torch.tensor(eval_path_attr, device=device), torch.tensor(eval_mask, device=device))
 
                 # 再获取target的q值
-                target_q_values_list = []
-                with torch.no_grad():
-                    # 初始化信息, 欲分配空间
-                    target_len_batch = [len(link_attr) for link_attr in exp_link_attr]
-                    target_total_len = sum(target_len_batch)
-                    target_link_attr_arr = np.zeros((target_total_len, m, 4), dtype=np.float32)
-                    target_path_attr_arr = np.zeros((target_total_len, flow_cnt, 1), dtype=np.float32)
-                    target_mask_arr = np.full((target_total_len, flow_cnt, m), False, dtype=np.bool_)
-
-                    # 合并batch
-                    target_l = 0
-                    for i in range(len(batch)):
-                        target_len = target_len_batch[i]
-                        if target_len == 0:
-                            continue
-                        target_link_attr_arr_temp = np.array(exp_link_attr[i], dtype=np.float32).reshape(target_len, m, 4)
-                        target_path_attr_arr_temp = np.array(exp_path_attr[i], dtype=np.float32).reshape(target_len, flow_cnt, 1)
-                        target_mask_arr_temp = np.array(exp_mask[i], dtype=np.bool_).reshape(target_len, flow_cnt, m)
-                        target_link_attr_arr[target_l:target_l + target_len] = target_link_attr_arr_temp
-                        target_path_attr_arr[target_l:target_l + target_len] = target_path_attr_arr_temp
-                        target_mask_arr[target_l:target_l + target_len] = target_mask_arr_temp
-                        target_l += target_len
-
-                    # 合并后的batch一次处理
-                    target_q_values_batch = target_model(torch.as_tensor(target_link_attr_arr, device=device), torch.as_tensor(target_path_attr_arr, device=device), torch.as_tensor(target_mask_arr, device=device))
-                    target_q_values_oringin_list = target_q_values_batch.tolist()
-
-                    # 解包计算值
-                    l = 0
-                    for i in range(len(batch)):
-                        target_reward = exp_rewards[i]
-                        target_done = exp_done[i]
-                        if target_done:
-                            target_q_values_list.append(target_reward)
-                            continue
-                        target_max_q_value = max([target_q_values_oringin_list[l + j] for j in range(target_len_batch[i])])
-                        target_q_value = target_reward + reward_gamma * target_max_q_value
-                        target_q_values_list.append(target_q_value)
-                        l += target_len_batch[i]
-
-                target_q_values = torch.tensor(target_q_values_list, device=device)
+                target_q_values = torch.tensor(exp_rewards, device=device)
 
                 print(f"eval_q: {eval_q_values}\ntarg_q: {target_q_values}")
 
