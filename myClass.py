@@ -429,7 +429,7 @@ class m_graph:
         # 1. fail_path上至少有一条fail_link
         # 2. active_path上必定全部为active_link
         # 一条假设:
-        # 1. 非active_link上经过的fail_path越多，越可能是fail_path
+        # 1. 非active_link上经过的fail_path越多，越可能是fail_link
         link_fail_cnt = [0 for _ in range(self.m)]                          # 记录每个可能的fail_link上经过的fail_path的数量, 若值为-1表示必定为active_link
         link_attr_max_fail_p = [0 for _ in range(self.m)]                   # 按link取最大值作为该link的失效概率的特征
 
