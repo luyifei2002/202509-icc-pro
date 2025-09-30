@@ -53,6 +53,7 @@ def get_reward_model(graph:myClass.m_graph, _env_actions, fail_links):
     reward = 0
     total_reward = 0
     done = False
+    cnt = 0
     while not done:
         stepIdx += 1
         last_fail_flows = fail_flows
@@ -65,6 +66,8 @@ def get_reward_model(graph:myClass.m_graph, _env_actions, fail_links):
             _, max_q_index = torch.max(q_values, dim=0)
             best_actions_index = max_q_index.item()
             env_actions = new_actions_list[best_actions_index]
+            if stepIdx == 1:
+                cnt = len(new_actions_list)
         
         fail_flows = graph.get_fail_flows(env_actions, fail_links)
         reward = 1.0 * (len(last_fail_flows) - len(fail_flows)) / origin_fail_flows_cnt / stepIdx
@@ -75,7 +78,7 @@ def get_reward_model(graph:myClass.m_graph, _env_actions, fail_links):
         if fail_flows == last_fail_flows:                       # 做出动作没任何效果, 认为done, 且由于没做出改变, 所以直接continue
             done = True
     print(f"model_reward: \t{total_reward:.2f}", end=", \t")
-    return total_reward
+    return total_reward, cnt
 
 def get_reward_random(graph:myClass.m_graph, _env_actions, fail_links):
     env_actions = copy.deepcopy(_env_actions)
@@ -104,7 +107,7 @@ def get_reward_random(graph:myClass.m_graph, _env_actions, fail_links):
     print(f"random_reward: \t{total_reward:.2f}", end=", \t")
     return total_reward
 
-def get_reward_greed(graph:myClass.m_graph, _env_actions, fail_links):
+def get_reward_greed_sum(graph:myClass.m_graph, _env_actions, fail_links):
     env_actions = copy.deepcopy(_env_actions)
     fail_flows = graph.get_fail_flows(env_actions, fail_links)
     origin_fail_flows_cnt = len(fail_flows)
@@ -120,7 +123,7 @@ def get_reward_greed(graph:myClass.m_graph, _env_actions, fail_links):
         greed_values = []
         for betch_id in range(len(new_actions_list)):
             greed_value = 0
-            for flow_id in range(graph.f):
+            for flow_id in fail_flows:
                 path = graph.flows[flow_id].paths[new_actions_list[betch_id][flow_id]]
                 for j in range(len(path) - 1):
                     link_id = graph.get_edgeId_by_node(path[j], path[j + 1])
@@ -137,7 +140,81 @@ def get_reward_greed(graph:myClass.m_graph, _env_actions, fail_links):
             done = True
         if fail_flows == last_fail_flows:                       # 做出动作没任何效果, 认为done, 且由于没做出改变, 所以直接continue
             done = True
-    print(f"greed_reward: \t{total_reward:.2f}", end=", \t")
+    print(f"greed_sum_reward: \t{total_reward:.2f}", end=", \t")
+    return total_reward
+
+def get_reward_greed_min(graph:myClass.m_graph, _env_actions, fail_links):
+    env_actions = copy.deepcopy(_env_actions)
+    fail_flows = graph.get_fail_flows(env_actions, fail_links)
+    origin_fail_flows_cnt = len(fail_flows)
+    stepIdx = 0
+    reward = 0
+    total_reward = 0
+    done = False
+    while not done:
+        stepIdx += 1
+        last_fail_flows = fail_flows
+
+        link_attr, _, mask, new_actions_list = graph.get_features(env_actions, fail_flows, device)
+        greed_values = []
+        for betch_id in range(len(new_actions_list)):
+            greed_value = 0
+            for flow_id in fail_flows:
+                path = graph.flows[flow_id].paths[new_actions_list[betch_id][flow_id]]
+                for j in range(len(path) - 1):
+                    link_id = graph.get_edgeId_by_node(path[j], path[j + 1])
+                    greed_value = max(greed_value, link_attr[betch_id][link_id][3])      # 计算方案中fail_p的最大值，取最大值的最大值最小的方案来贪心
+            greed_values.append(greed_value)
+        best_actions_index = greed_values.index(min(greed_values))
+        env_actions = new_actions_list[best_actions_index]
+        
+        fail_flows = graph.get_fail_flows(env_actions, fail_links)
+        reward = 1.0 * (len(last_fail_flows) - len(fail_flows)) / origin_fail_flows_cnt / stepIdx
+        total_reward += reward
+
+        if len(fail_flows) == 0:                                # 成功重路由, 认为done
+            done = True
+        if fail_flows == last_fail_flows:                       # 做出动作没任何效果, 认为done, 且由于没做出改变, 所以直接continue
+            done = True
+    print(f"greed_min_reward: \t{total_reward:.2f}", end=", \t")
+    return total_reward
+
+def get_reward_greed_max_sum(graph:myClass.m_graph, _env_actions, fail_links):
+    env_actions = copy.deepcopy(_env_actions)
+    fail_flows = graph.get_fail_flows(env_actions, fail_links)
+    origin_fail_flows_cnt = len(fail_flows)
+    stepIdx = 0
+    reward = 0
+    total_reward = 0
+    done = False
+    while not done:
+        stepIdx += 1
+        last_fail_flows = fail_flows
+
+        link_attr, _, mask, new_actions_list = graph.get_features(env_actions, fail_flows, device)
+        greed_values = []
+        for betch_id in range(len(new_actions_list)):
+            greed_value = 0
+            for flow_id in fail_flows:
+                path = graph.flows[flow_id].paths[new_actions_list[betch_id][flow_id]]
+                max_value = 0
+                for j in range(len(path) - 1):
+                    link_id = graph.get_edgeId_by_node(path[j], path[j + 1])
+                    max_value = max(max_value, link_attr[betch_id][link_id][3])      # 计算方案中fail_p的最大值，取最大值的和最小的方案来贪心
+                greed_value += max_value
+            greed_values.append(greed_value)
+        best_actions_index = greed_values.index(min(greed_values))
+        env_actions = new_actions_list[best_actions_index]
+        
+        fail_flows = graph.get_fail_flows(env_actions, fail_links)
+        reward = 1.0 * (len(last_fail_flows) - len(fail_flows)) / origin_fail_flows_cnt / stepIdx
+        total_reward += reward
+
+        if len(fail_flows) == 0:                                # 成功重路由, 认为done
+            done = True
+        if fail_flows == last_fail_flows:                       # 做出动作没任何效果, 认为done, 且由于没做出改变, 所以直接continue
+            done = True
+    print(f"greed_maxsum_reward: \t{total_reward:.2f}", end=", \t")
     return total_reward
 
 ################### 正式流程代码 ###################
@@ -150,6 +227,8 @@ try:
     with open(save_dir_output + "rewards.txt", "w") as f:
         f.write(f"")
     with open(save_dir_output + "rewards_vs.txt", "w") as f:
+        f.write(f"")
+    with open(save_dir_output + "time_vs.txt", "w") as f:
         f.write(f"")
 
     # 读入拓扑
@@ -199,20 +278,35 @@ try:
         print(f"\nnow_episode: {now_episode}")
             
         start = time.perf_counter()# 计时--------------------------------------------------------------
-        reward_model = get_reward_model(graph, env_actions, fail_links)
+        reward_model, actions_cnt = get_reward_model(graph, env_actions, fail_links)
+        time_model = (time.perf_counter() - start) * 1000
         print(f"耗时: \t{(time.perf_counter() - start) * 1000:.3f} 毫秒")
 
         start = time.perf_counter()# 计时--------------------------------------------------------------
         reward_random = get_reward_random(graph, env_actions, fail_links)
+        time_random = (time.perf_counter() - start) * 1000
         print(f"耗时: \t{(time.perf_counter() - start) * 1000:.3f} 毫秒")
 
         start = time.perf_counter()# 计时--------------------------------------------------------------
-        reward_greed = get_reward_greed(graph, env_actions, fail_links)
+        reward_greed_sum = get_reward_greed_sum(graph, env_actions, fail_links)
+        time_sum = (time.perf_counter() - start) * 1000
+        print(f"耗时: \t{(time.perf_counter() - start) * 1000:.3f} 毫秒")
+
+        start = time.perf_counter()# 计时--------------------------------------------------------------
+        reward_greed_max = get_reward_greed_min(graph, env_actions, fail_links)
+        time_max = (time.perf_counter() - start) * 1000
+        print(f"耗时: \t{(time.perf_counter() - start) * 1000:.3f} 毫秒")
+
+        start = time.perf_counter()# 计时--------------------------------------------------------------
+        reward_greed_max_sum = get_reward_greed_max_sum(graph, env_actions, fail_links)
+        time_max_sum = (time.perf_counter() - start) * 1000
         print(f"耗时: \t{(time.perf_counter() - start) * 1000:.3f} 毫秒")
 
         # 此处为一轮训练完毕
         with open(save_dir_output + "rewards_vs.txt", "a") as f:
-                f.write(f"{now_episode},{reward_model},{reward_random},{reward_greed}\n")
+                f.write(f"{now_episode},{reward_model},{reward_random},{reward_greed_sum},{reward_greed_max},{reward_greed_max_sum}\n")
+        with open(save_dir_output + "time_vs.txt", "a") as f:
+                f.write(f"{actions_cnt},{time_model},{time_random},{time_sum},{time_max},{time_max_sum}\n")
 
 except KeyboardInterrupt:
     print("Ctrl-C -> Exit")
