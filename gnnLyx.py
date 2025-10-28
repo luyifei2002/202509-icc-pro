@@ -58,8 +58,8 @@ class gnnLyx(nn.Module):
         self.hparams = hparams
         
         # 特征嵌入层
-        self.link_embed = nn.Linear(4, hparams['link_state_dim'])
-        self.path_embed = nn.Linear(1, hparams['path_state_dim'])
+        self.link_embed = nn.Linear(1, hparams['link_state_dim'])
+        self.path_embed = nn.Linear(2, hparams['path_state_dim'])
         
         # 状态更新层
         self.path_update = nn.GRUCell(
@@ -86,6 +86,7 @@ class gnnLyx(nn.Module):
         )
         
         # 读出层
+        self.path_aggregated_w = nn.Linear(hparams['path_state_dim'], 1)
         self.readout = nn.Sequential(
             nn.Linear(hparams['path_state_dim'], hparams['readout_units']),
             nn.SELU(),
@@ -135,7 +136,8 @@ class gnnLyx(nn.Module):
             h_path = next_h_path
 
         # 3.读出层
-        aggregated_message_path = torch.mean(h_path, dim=-2)    # [batch_size, path_dim]
+        path_weight = F.softmax(self.path_aggregated_w(h_path), dim=1)  # [batch_size, num_path, 1]
+        aggregated_message_path = torch.sum(path_weight * h_path, dim=1)  # [batch_size, path_dim]
 
         q_value = self.readout(aggregated_message_path).squeeze(-1) # [batch_size]
 

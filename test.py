@@ -11,6 +11,7 @@ from datetime import datetime
 import networkx as nx
 import matplotlib.pyplot as plt
 import time
+import reprlib
 
 from gnnLyx import gnnLyx
 import myClass
@@ -98,14 +99,14 @@ try:
     graph = myClass.m_graph()
     init_env_actions = graph.initial_generate_ba(100, 2)
     print(f"n = {graph.n}, m = {graph.m}, f = {graph.f}")
-    print(f"init_env_actions: \n{init_env_actions}")
+    print(f"init_env_actions: \n{reprlib.repr(init_env_actions)}")
 
     # 初始化模型
     model = gnnLyx(hparams).to(device)
     target_model = gnnLyx(hparams).to(device)
     optimizer = optim.Adam(model.parameters(), lr=0.00005)    # 这里设置学习率
     if (eval_flag):
-        model_state = torch.load("model_epoch_20000.pth", map_location=device)
+        model_state = torch.load("model_epoch_300000.pth", map_location=device)
         model.load_state_dict(model_state)
     target_model.load_state_dict(model.state_dict())    # 初始参数相同
     # torch.autograd.set_detect_anomaly(True)             # 调试时开启
@@ -143,7 +144,9 @@ try:
             if len(fail_flows) >= FAIL_FLOW_CNT_MIN and len(fail_flows) <= FAIL_FLOW_CNT_MAX:
                 break
         
-        origin_fail_flows_cnt = len(fail_flows)
+        # 失效环境初始化成功
+        total_bw = sum([graph.flows[flow_id].bw for flow_id in range(flow_cnt)])
+        origin_throughput = sum(graph.get_path_throughput(env_actions, fail_flows))
         stepIdx = 0
         reward = 0
         total_reward = 0
@@ -152,7 +155,7 @@ try:
             total_step += 1
             stepIdx += 1
 
-            print(f"\nStepIdx: {stepIdx}, Total_step: {total_step}, Total_reward = {total_reward}, Memory_len = {len(memory)}")
+            print(f"\nTotal_step: {total_step}, Memory_len = {len(memory)} --------------------------------")
 
             last_env_actions = env_actions
             last_fail_flows = fail_flows
@@ -160,9 +163,9 @@ try:
             # ################### 推理模式 ###################
             start = time.perf_counter()# 计时--------------------------------------------------------------
             if np.random.rand() < epsilon and eval_flag == False:
+                print("Random Process")
                 _, _, _, new_actions_list = graph.get_features(env_actions, fail_flows, device)
                 env_actions = new_actions_list[random.randint(0, len(new_actions_list) - 1)]
-                print("Random Process")
             else:
                 model.eval()
                 with torch.no_grad():
@@ -173,33 +176,25 @@ try:
                     env_actions = new_actions_list[best_actions_index]
             
             fail_flows = graph.get_fail_flows(env_actions, fail_links)
-            reward = 1.0 * (len(last_fail_flows) - len(fail_flows)) / origin_fail_flows_cnt
-            total_reward += reward
+            new_throughput = sum(graph.get_path_throughput(env_actions, fail_flows))
+            reward = new_throughput / total_bw
+            performance = (new_throughput - origin_throughput) / (total_bw - origin_throughput + 1e-6)   # 防止除0
 
             print(f"决策部分耗时: {(time.perf_counter() - start) * 1000:.3f} 毫秒")
-            print(f"old\tactions: \t{last_env_actions}")
+            print(f"old\tactions: \t{reprlib.repr(last_env_actions)}")
             print(f"\tfail_flows: \t{last_fail_flows}")
-            print(f"new\tactions: \t{env_actions}")
+            print(f"new\tactions: \t{reprlib.repr(env_actions)}")
             print(f"\tfail_flows: \t{fail_flows}")
+            print(f"reward\t\t = {reward:.4f}\t = {new_throughput:.2f} / {total_bw:.2f}")
+            print(f"performance\t = {performance:.4f}\t = ({new_throughput:.2f} - {origin_throughput:.2f}) / ({total_bw:.2f} - {origin_throughput:.2f})")
 
-            memory_flag = True
-            if len(fail_flows) > origin_fail_flows_cnt:             # 操作后失效的比原来多了, 认为done
-                done = True
-            if len(fail_flows) == 0:                                # 成功重路由, 认为done
-                done = True
-            if total_reward < -1.0:                                 # 超出阈值, 认为done
-                done = True
-            if fail_flows == last_fail_flows:                       # 做出动作没任何效果, 认为done, 且由于没做出改变, 所以直接continue
-                done = True
-                memory_flag = False
-            print(f"reward: {reward}, \ttotal_reward: {total_reward}")
+            done = True    # 改成每轮只进行一步决策
 
             # 记录经验池 (s, a, s', r, done)
             # 由于发现提取特征值比较慢，现在改成了直接传特征值
             start = time.perf_counter()# 计时--------------------------------------------------------------
-            if memory_flag:
-                experience = make_exprience(graph, fail_links, env_actions, reward, done)
-                memory.append(copy.deepcopy(experience))
+            experience = make_exprience(graph, fail_links, env_actions, reward, done)
+            memory.append(copy.deepcopy(experience))
             print(f"经验记录耗时: {(time.perf_counter() - start) * 1000:.3f} 毫秒")
 
             # ################### 训练模式 ###################
@@ -218,7 +213,7 @@ try:
                 # 再获取target的q值
                 target_q_values = torch.tensor(exp_rewards, device=device)
 
-                print(f"eval_q: {eval_q_values}\ntarg_q: {target_q_values}")
+                print(f"eval_q: {reprlib.repr(eval_q_values.tolist())}\ntarg_q: {reprlib.repr(target_q_values.tolist())}")
 
                 loss = nn.functional.mse_loss(eval_q_values, target_q_values.detach())
                 print(f"loss = {loss.item()}")
@@ -250,9 +245,11 @@ try:
                 epsilon *= epsilon_decay
 
         # 此处为一轮训练完毕
-        print(f"episode: {now_episode}, total_reward = {total_reward}")
+        print(f"episode: {now_episode}, reward = {reward:.4f}, performance = {performance:.4f}, epsilon = {epsilon:.6f}")
         with open(save_dir_output + "rewards.txt", "a") as f:
-                f.write(f"{total_step},{total_reward}\n")
+                f.write(f"{total_step},{reward}\n")
+        with open(save_dir_output + "performance.txt", "a") as f:
+                f.write(f"{total_step},{performance}\n")
 
 except KeyboardInterrupt:
     print("Ctrl-C -> Exit")

@@ -28,6 +28,7 @@ class m_flow:
         self.t = t
         self.bw = bw
         self.paths = []
+        self.paths_link_id = []
 
 class m_ksp_node1:
     def __init__(self, v, d):
@@ -70,12 +71,6 @@ class m_graph:
         self.edge_tail = []
         self.flows = []
 
-        # 介数相关变量
-        self.jieshu_vis = []
-        self.jieshu_dis = []
-        self.jieshu_cnt = []
-        self.jieshu_ret = []
-
     def add_edge(self, u, v, bw, delay):
         self.edges.append(m_edge(u, v, self.edge_head[u], self.edge_tail[v], bw, delay))
         self.edge_head[u] = len(self.edges) - 1
@@ -91,10 +86,6 @@ class m_graph:
         self.edge_tail = []
         self.flows = []
         self.H = []
-        self.jieshu_vis = []
-        self.jieshu_dis = []
-        self.jieshu_cnt = []
-        self.jieshu_ret = []
 
     def readin(self, file_name):
         path_dir = "./"
@@ -110,9 +101,6 @@ class m_graph:
                 self.edge_head = [-1 for _ in range(n)]
                 self.edge_tail = [-1 for _ in range(n)]
                 self.H = [65535 for _ in range(n)]
-                self.jieshu_vis = [[0 for _ in range(self.n)] for _ in range(self.n)]
-                self.jieshu_dis = [[np.inf for _ in range(self.n)] for _ in range(self.n)]
-                self.jieshu_cnt = [[0 for _ in range(self.n)] for _ in range(self.n)]
 
                 for _ in range(n):
                     line = file.readline().strip().split()
@@ -176,6 +164,11 @@ class m_graph:
             cnt[u] += 1
             if u == t and cnt[u] <= m_graph.K_SP_CNT:
                 self.flows[flow_id].paths.append(copy.deepcopy(path))
+                path_link_id = []
+                for i in range(len(path) - 1):
+                    link_id = self.get_edgeId_by_node(path[i], path[i + 1])
+                    path_link_id.append(link_id)
+                self.flows[flow_id].paths_link_id.append(path_link_id)
             if cnt[u] > m_graph.K_SP_CNT:
                 continue
             e_id = self.edge_head[u]
@@ -210,13 +203,12 @@ class m_graph:
         self.readin(file_name)
         for i in range(self.f):
             self.cal_k_sp(i)
-        self.cal_jieshu()
     
     def initial_generate_ba(self, n, m):    # 生成一个ba无标度网络拓扑, 参数为节点数n, 每次加点连边数m
         G = nx.barabasi_albert_graph(n, m=m)
 
         print(f"n = {G.number_of_nodes()}, m = {G.number_of_edges()}")
-        print("平均最短路径长度为：",nx.average_shortest_path_length(G))
+        print(f"平均最短路径长度为：{nx.average_shortest_path_length(G):.4f}")
 
         # 初始化参数
         self.n = G.number_of_nodes()
@@ -225,9 +217,6 @@ class m_graph:
         self.edge_head = [-1 for _ in range(n)]
         self.edge_tail = [-1 for _ in range(n)]
         self.H = [65535 for _ in range(n)]
-        self.jieshu_vis = [[0 for _ in range(self.n)] for _ in range(self.n)]
-        self.jieshu_dis = [[np.inf for _ in range(self.n)] for _ in range(self.n)]
-        self.jieshu_cnt = [[0 for _ in range(self.n)] for _ in range(self.n)]
 
         # 添加边, 备注: 生成图这一块不考虑节点位置属性了, 边delay随机生成
         node_mapping = {node: idx for idx, node in enumerate(G.nodes())}
@@ -297,8 +286,6 @@ class m_graph:
                 now_v = last[now_u]
                 if now_v == -1:
                     break
-                e_id = self.get_edgeId_by_node(now_u, now_v)
-                link_bw_used[e_id] += bw
                 now_path.append(now_v)
                 now_u = now_v
             self.flows.append(m_flow(src, dst, bw))
@@ -322,73 +309,12 @@ class m_graph:
                 self.flows.pop()
                 cant_add_flag += 1
                 continue
+            for i in range(len(now_path) - 1):
+                link_id = self.get_edgeId_by_node(now_path[i], now_path[i + 1])
+                link_bw_used[link_id] += bw
             cant_add_flag = 0
             self.f += 1
-        self.cal_jieshu()
         return env_actions
-
-    def cal_jieshu_bfs(self, s):
-        vis = self.jieshu_vis[s]
-        dis = self.jieshu_dis[s]
-        cnt = self.jieshu_cnt[s]
-        vis[s] = 1
-        dis[s] = 0
-        cnt[s] = 1
-        q = deque()
-        q.append(s)
-        while(q):
-            u = q.popleft()
-
-            e_id = self.edge_head[u]
-            while e_id != -1:
-                edge = self.edges[e_id]
-                v = edge.v
-                if vis[v] == 1:
-                    if dis[v] == dis[u] + 1:
-                        cnt[v] += cnt[u]
-                    e_id = edge.next_head
-                    continue
-                vis[v] = 1
-                dis[v] = dis[u] + 1
-                cnt[v] = cnt[u]
-                q.append(v)
-                e_id = edge.next_head
-
-            e_id = self.edge_tail[u]
-            while e_id != -1:
-                edge = self.edges[e_id]
-                v = edge.u
-                if vis[v] == 1:
-                    if dis[v] == dis[u] + 1:
-                        cnt[v] += cnt[u]
-                    e_id = edge.next_tail
-                    continue
-                vis[v] = 1
-                dis[v] = dis[u] + 1
-                cnt[v] = cnt[u]
-                q.append(v)
-                e_id = edge.next_tail
-
-    def cal_jieshu(self):
-        self.jieshu_ret = []
-
-        # 最短路计数
-        for i in range(self.n):
-            self.cal_jieshu_bfs(i)
-
-        # 计算介数
-        for edge in self.edges:
-            jieshu = 0.000
-            u, v = edge.u, edge.v
-            for j in range(self.n):
-                if j == u or j == v:
-                    continue
-                for k in range(self.n):
-                    if k == u or k == v:
-                        continue
-                    if self.jieshu_dis[j][u] + self.jieshu_dis[v][k] + 1 == self.jieshu_dis[j][k]:
-                        jieshu += 1.0 * self.jieshu_cnt[j][u] * self.jieshu_cnt[v][k] / self.jieshu_cnt[j][k]
-            self.jieshu_ret.append(jieshu)
 
     def print_all_flow_all_path(self):
         for i in range(self.f):
@@ -481,15 +407,58 @@ class m_graph:
         return link_attr_max_fail_p
 
     def get_link_attr(self, env_actions):
-        link_capacity = self.get_link_capacity()
-        link_capacity_available = self.get_link_capacity_available(env_actions)
-        link_betweenness = self.jieshu_ret    # link介数
-        
-        link_attr = [[link_capacity[i], link_capacity_available[i], link_betweenness[i]] for i in range(self.m)]
+        link_attr = [[] for i in range(self.m)]
         return link_attr
+    
+    def get_path_throughput(self, env_actions, fail_flows):
+        # 给定链路和业务流信息
+        link_residual_cap = [edge.bw for edge in self.edges]         # 获取每条链路的容量
+        flows_to_links = [self.flows[i].paths_link_id[env_actions[i]] for i in range(self.f)]   # 业务流到链路的映射关系
+        links_to_flows = [[] for _ in range(self.m)]        # 链路到业务流的映射关系
+        for flow_id in range(self.f):
+            for link_id in flows_to_links[flow_id]:
+                links_to_flows[link_id].append(flow_id)
+        flow_frozen = [False for _ in range(self.f)]    # 业务流是否已经缩放到最小
+        
+        flow_throughput = [self.flows[i].bw for i in range(self.f)]      # 需要计算仿真的业务流吞吐量
+        for flow_id in fail_flows:                      # 代码复用这一块儿，这样算reward也能使用了
+            flow_throughput[flow_id] = 0.0
+        link_load = [0.0 for _ in range(self.m)]
+        for link_id in range(self.m):
+            for flow_id in links_to_flows[link_id]:
+                link_load[link_id] += flow_throughput[flow_id]
 
-    def get_path_attr(self):
-        return [[float(flow.bw)] for flow in self.flows]
+        while True:
+            link_alpha = [1.0 for _ in range(self.m)]
+            min_link_alpha, min_link_id = 1.0, -1
+            for link_id in range(self.m):
+                if link_load[link_id] <= 1e-6:   # 浮点误差，认为为0
+                    continue
+                if link_load[link_id] > link_residual_cap[link_id]:
+                    link_alpha[link_id] = link_residual_cap[link_id] / link_load[link_id]
+                    if link_alpha[link_id] < min_link_alpha:
+                        min_link_alpha = link_alpha[link_id]
+                        min_link_id = link_id
+            if min_link_id == -1:   # 已收敛
+                break
+            # print(f"Min_link_id: {min_link_id}, Min_link_alpha: {min_link_alpha}")
+            # print(f"min_link_load: {link_load[min_link_id]}, min_link_residual_cap: {link_residual_cap[min_link_id]}")
+            # print(f"link_capacity: {self.edges[min_link_id].bw}")
+            for flow_id in links_to_flows[min_link_id]: # 对缩放系数最小的链路上的未缩放业务流进行缩放
+                if flow_frozen[flow_id]:
+                    continue
+                flow_frozen[flow_id] = True
+                for link_id2 in flows_to_links[flow_id]:
+                    link_load[link_id2] -= flow_throughput[flow_id]
+                    link_residual_cap[link_id2] -= flow_throughput[flow_id] * min_link_alpha
+                flow_throughput[flow_id] *= min_link_alpha
+        
+        return flow_throughput  # 输出业务流吞吐量
+
+    def get_path_attr(self, env_actions):
+        flow_bw = [self.flows[i].bw for i in range(self.f)]
+        flow_throughput = self.get_path_throughput(env_actions, [])
+        return [[float(flow_bw[i]), float(flow_throughput[i])] for i in range(self.f)]
     
     def get_mask(self, now_actions):
         mask = [[False for _ in range(self.m)] for _ in range(self.f)]
@@ -509,15 +478,13 @@ class m_graph:
             link_attr = self.get_link_attr(env_actions)
             for i in range(self.m):
                 link_attr[i].append(link_attr_max_fail_p_list[i])
-                if link_attr[i][1] < 0:
-                    return
             if tensor_flag:
                 link_attr_list.append(torch.tensor(link_attr))
-                path_attr_list.append(torch.tensor(self.get_path_attr()))
+                path_attr_list.append(torch.tensor(self.get_path_attr(env_actions)))
                 mask_list.append(torch.tensor(self.get_mask(env_actions)))
             else:
                 link_attr_list.append(link_attr)
-                path_attr_list.append(self.get_path_attr())
+                path_attr_list.append(self.get_path_attr(env_actions))
                 mask_list.append(self.get_mask(env_actions))
             new_actions_list.append(copy.deepcopy(env_actions))
             return
@@ -528,8 +495,8 @@ class m_graph:
             env_actions[now_judge_flow_id] = i
             self.get_features_dfs(cur + 1, env_actions, fail_flows, link_attr_list, path_attr_list, mask_list, new_actions_list, link_attr_max_fail_p_list, tensor_flag=tensor_flag)
 
-    # link_attr:    [batch_size, num_link, 4]   [总带宽, 可用带宽, 介数, fail_p]    fail_p量化了该边可能失效的可能性
-    # path_attr:    [batch_size, num_path, 1]   [带宽]
+    # link_attr:    [batch_size, num_link, 1]   [fail_p]    fail_p量化了该边可能失效的可能性
+    # path_attr:    [batch_size, num_path, 2]   [bw, throughput]
     # mask:         [batch_size, num_path, num_link]
     def get_features(self, env_actions, fail_flows, device):  # env_actions: 当前环境的路径方案, fail_flows: 失效的路径id列表
         link_attr_list = []
@@ -565,7 +532,7 @@ class m_graph:
         link_attr = self.get_link_attr(env_actions)
         for i in range(self.m):
             link_attr[i].append(link_attr_max_fail_p_list[i])
-        path_attr = self.get_path_attr()
+        path_attr = self.get_path_attr(env_actions)
         mask = self.get_mask(env_actions)
         return link_attr, path_attr, mask
 
