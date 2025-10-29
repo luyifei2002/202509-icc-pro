@@ -39,31 +39,18 @@ hparams = {
 }
 
 # 训练参数
-memory = deque(maxlen=2000)
-batch_size = 32
-target_model_update_freq = 1000      # 目标网络更新频率
-target_model_save_freq = 5000        # 目标网络保存频率
-reward_gamma = 0.95     # reward 计算参数
+memory = deque(maxlen=20000)
+batch_size = 64
 eval_flag = False       # True: 推理模式,   False: 训练模式
 
-# 贪心参数
-epsilon = 1.0
-epsilon_min = 0.001
-epsilon_decay = 0.995
-# 当前需要ln(0.001/1.0)/ln(0.995) = 1378轮
-
-# 记录list
-rewards = []
-losses = []
-
 ################### 函数代码 ###################
-def make_exprience(graph, fail_links, env_actions, reward, done):
+def make_exprience(graph, fail_links, env_actions, reward):
     eval_link_attr, eval_path_attr, eval_mask = graph.get_features_one(fail_links, env_actions)
-    return eval_link_attr, eval_path_attr, eval_mask, reward, done
+    return eval_link_attr, eval_path_attr, eval_mask, reward
 
-def print_current_time():
+def print_current_time(s:str):
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"start time : {current_time}:\n")
+    print(f"{s} : {current_time}:\n")
 
 def test_maxp(graph : myClass.m_graph, env_actions, fail_links):
     fail_flows = graph.get_fail_flows(env_actions, fail_links)
@@ -85,31 +72,45 @@ def test_maxp(graph : myClass.m_graph, env_actions, fail_links):
         print(f"idx: {idx},\tvalue: {value}")
     return
 
+def calc_reward(graph, env_actions, fail_links, total_bw):
+    fail_flows = graph.get_fail_flows(env_actions, fail_links)
+    throughput = sum(graph.get_path_throughput(env_actions, fail_flows))
+    return throughput / total_bw
+
+def calc_performance(graph, env_actions, fail_links, total_bw, origin_throughput):
+    fail_flows = graph.get_fail_flows(env_actions, fail_links)
+    new_throughput = sum(graph.get_path_throughput(env_actions, fail_flows))
+    performance = (new_throughput - origin_throughput) / (total_bw - origin_throughput + 1e-6)   # 防止除0
+    print(f"performance\t = {performance:.4f}\t = ({new_throughput:.2f} - {origin_throughput:.2f}) / ({total_bw:.2f} - {origin_throughput:.2f})")
+    return performance
+
 ################### 正式流程代码 ###################
 try:
-    print_current_time()
+    print_current_time("start time")
 
     # 初始化覆盖txt
     with open(save_dir_output + "losses.txt", "w") as f:
         f.write(f"")
     with open(save_dir_output + "rewards.txt", "w") as f:
         f.write(f"")
+    with open(save_dir_output + "performance.txt", "w") as f:
+        f.write(f"")
+    with open(save_dir_output + "best_performance.txt", "w") as f:
+        f.write(f"")
 
     # 读入拓扑
     graph = myClass.m_graph()
     init_env_actions = graph.initial_generate_ba(100, 2)
+    total_bw = sum([graph.flows[flow_id].bw for flow_id in range(graph.f)])
     print(f"n = {graph.n}, m = {graph.m}, f = {graph.f}")
     print(f"init_env_actions: \n{reprlib.repr(init_env_actions)}")
 
     # 初始化模型
     model = gnnLyx(hparams).to(device)
-    target_model = gnnLyx(hparams).to(device)
-    optimizer = optim.Adam(model.parameters(), lr=0.00005)    # 这里设置学习率
+    optimizer = optim.Adam(model.parameters(), lr=0.00001)    # 这里设置学习率
     if (eval_flag):
         model_state = torch.load("model_epoch_300000.pth", map_location=device)
         model.load_state_dict(model_state)
-    target_model.load_state_dict(model.state_dict())    # 初始参数相同
-    # torch.autograd.set_detect_anomaly(True)             # 调试时开启
 
     print(f"model_device: {next(model.parameters()).device}") # 输出：cpu 或 cuda:0
 
@@ -119,9 +120,12 @@ try:
 
     # 初始化参数
     episodes = 1000000     # 跑多少轮
-    total_step = 0
     FAIL_LINK_CNT_MIN, FAIL_LINK_CNT_MAX = 1, 3
     FAIL_FLOW_CNT_MIN, FAIL_FLOW_CNT_MAX = 2, 5
+
+    # 统计时间
+    time_eval_sum = 0.0
+    time_train_sum = 0.0
 
     # ################### 强化学习 ###################
     # 环境: [env_actions + fail_links] -> fail_flows
@@ -133,126 +137,91 @@ try:
         fail_flows = []
         while True:
             fail_links_cnt = random.randint(FAIL_LINK_CNT_MIN, FAIL_LINK_CNT_MAX)
-            fail_links = []
-            for _ in range(fail_links_cnt):
-                while True:
-                    link_id = random.randint(0, m - 1)
-                    if link_id not in fail_links:
-                        fail_links.append(link_id)
-                        break
+            fail_links = random.sample(range(graph.m), fail_links_cnt)
             fail_flows = graph.get_fail_flows(env_actions, fail_links)
-            if len(fail_flows) >= FAIL_FLOW_CNT_MIN and len(fail_flows) <= FAIL_FLOW_CNT_MAX:
+            if FAIL_FLOW_CNT_MIN <= len(fail_flows) <= FAIL_FLOW_CNT_MAX:
                 break
-        
-        # 失效环境初始化成功
-        total_bw = sum([graph.flows[flow_id].bw for flow_id in range(flow_cnt)])
         origin_throughput = sum(graph.get_path_throughput(env_actions, fail_flows))
-        stepIdx = 0
-        reward = 0
-        total_reward = 0
-        done = False
-        while not done:
-            total_step += 1
-            stepIdx += 1
+        
+        print(f"\n=== Episode {now_episode} ===")
 
-            print(f"\nTotal_step: {total_step}, Memory_len = {len(memory)} --------------------------------")
+        # ################### 推理模式 ###################
+        # 1、枚举所有方案
+        # 2、计算奖励
+        # 3、推理，比较q值和实际奖励
+        # 4、经验入库
+        start_eval_time = time.perf_counter()
+        link_attr_batch, path_attr_batch, mask_batch, new_actions_list = graph.get_features(env_actions, fail_flows, device)
+        rewards = []
+        for acts in new_actions_list:
+            r = calc_reward(graph, acts, fail_links, total_bw)
+            rewards.append(r)
+        rewards_tensor = torch.tensor(rewards, dtype=torch.float32, device=device)
+        best_idx = torch.argmax(rewards_tensor).item()
 
-            last_env_actions = env_actions
-            last_fail_flows = fail_flows
+        best_env_actions = new_actions_list[best_idx]
+        best_reward = rewards[best_idx]
+        best_performance = calc_performance(graph, best_env_actions, fail_links, total_bw, origin_throughput)
 
-            # ################### 推理模式 ###################
-            start = time.perf_counter()# 计时--------------------------------------------------------------
-            if np.random.rand() < epsilon and eval_flag == False:
-                print("Random Process")
-                _, _, _, new_actions_list = graph.get_features(env_actions, fail_flows, device)
-                env_actions = new_actions_list[random.randint(0, len(new_actions_list) - 1)]
-            else:
-                model.eval()
-                with torch.no_grad():
-                    link_attr, path_attr, mask, new_actions_list = graph.get_features(env_actions, fail_flows, device)
-                    q_values = model(link_attr, path_attr, mask)
-                    max_q_value, max_q_index = torch.max(q_values, dim=0)
-                    best_actions_index = max_q_index.item()
-                    env_actions = new_actions_list[best_actions_index]
-            
-            fail_flows = graph.get_fail_flows(env_actions, fail_links)
-            new_throughput = sum(graph.get_path_throughput(env_actions, fail_flows))
-            reward = new_throughput / total_bw
-            performance = (new_throughput - origin_throughput) / (total_bw - origin_throughput + 1e-6)   # 防止除0
+        q_idx = -1
+        model.eval()
+        with torch.no_grad():
+            q_values = model(link_attr_batch, path_attr_batch, mask_batch)
+            q_idx = torch.argmax(q_values).item()
 
-            print(f"决策部分耗时: {(time.perf_counter() - start) * 1000:.3f} 毫秒")
-            print(f"old\tactions: \t{reprlib.repr(last_env_actions)}")
-            print(f"\tfail_flows: \t{last_fail_flows}")
-            print(f"new\tactions: \t{reprlib.repr(env_actions)}")
-            print(f"\tfail_flows: \t{fail_flows}")
-            print(f"reward\t\t = {reward:.4f}\t = {new_throughput:.2f} / {total_bw:.2f}")
-            print(f"performance\t = {performance:.4f}\t = ({new_throughput:.2f} - {origin_throughput:.2f}) / ({total_bw:.2f} - {origin_throughput:.2f})")
+        q_env_actions = new_actions_list[q_idx]
+        q_reward = rewards[q_idx]
+        q_performance = calc_performance(graph, q_env_actions, fail_links, total_bw, origin_throughput)
 
-            done = True    # 改成每轮只进行一步决策
-
-            # 记录经验池 (s, a, s', r, done)
-            # 由于发现提取特征值比较慢，现在改成了直接传特征值
-            start = time.perf_counter()# 计时--------------------------------------------------------------
-            experience = make_exprience(graph, fail_links, env_actions, reward, done)
-            memory.append(copy.deepcopy(experience))
-            print(f"经验记录耗时: {(time.perf_counter() - start) * 1000:.3f} 毫秒")
-
-            # ################### 训练模式 ###################
-            start = time.perf_counter()# 计时--------------------------------------------------------------
-            if len(memory) > batch_size and eval_flag == False:
-                model.train()
-                target_model.eval()
-
-                batch = random.sample(memory, batch_size)
-                eval_link_attr, eval_path_attr, eval_mask, exp_rewards, exp_done = zip(*batch)
-                
-
-                # 先获取eval的q值
-                eval_q_values = model(torch.tensor(eval_link_attr, device=device), torch.tensor(eval_path_attr, device=device), torch.tensor(eval_mask, device=device))
-
-                # 再获取target的q值
-                target_q_values = torch.tensor(exp_rewards, device=device)
-
-                print(f"eval_q: {reprlib.repr(eval_q_values.tolist())}\ntarg_q: {reprlib.repr(target_q_values.tolist())}")
-
-                loss = nn.functional.mse_loss(eval_q_values, target_q_values.detach())
-                print(f"loss = {loss.item()}")
-
-                optimizer.zero_grad()# 清除梯度
-                loss.backward()# 反向传播
-                nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)# 梯度裁剪 (可选)
-                optimizer.step()# 参数更新
-
-                # 记录损失
-                losses.append(loss.item())
-                with open(save_dir_output + "losses.txt", "a") as f:
-                    f.write(f"{total_step},{loss}\n")
-            
-            print(f"训练部分耗时: {(time.perf_counter() - start) * 1000:.3f} 毫秒")
-            
-            # 同步参数到另一个网络
-            if total_step % target_model_update_freq == 0:
-                target_model.load_state_dict(model.state_dict())
-            # 保存网络
-            if total_step % target_model_save_freq == 0:
-                # 保存模型
-                save_path = os.path.join(save_dir_models, f'model_epoch_{total_step}.pth') #保存模型，位置在开头定义,要注意执行路径
-                torch.save(target_model.state_dict(), save_path)
-                print(f'Model saved at {save_path}')
-            
-            # 减少epsilon
-            if epsilon > epsilon_min:
-                epsilon *= epsilon_decay
-
-        # 此处为一轮训练完毕
-        print(f"episode: {now_episode}, reward = {reward:.4f}, performance = {performance:.4f}, epsilon = {epsilon:.6f}")
+        print(f"Best reward:\t idx = {best_idx}, reward = {best_reward:.4f}, performance = {best_performance:.4f}")
+        print(f"Q    reward:\t idx = {q_idx}, reward = {q_reward:.4f}, performance = {q_performance:.4f}")
         with open(save_dir_output + "rewards.txt", "a") as f:
-                f.write(f"{total_step},{reward}\n")
+            f.write(f"{now_episode},{q_reward}\n")
         with open(save_dir_output + "performance.txt", "a") as f:
-                f.write(f"{total_step},{performance}\n")
+            f.write(f"{now_episode},{q_performance}\n")
+        with open(save_dir_output + "best_performance.txt", "a") as f:
+            f.write(f"{now_episode},{best_performance}\n")
+
+        # 经验入库
+        experience = make_exprience(graph, fail_links, best_env_actions, best_reward)
+        memory.append(copy.deepcopy(experience))
+        experience_q = make_exprience(graph, fail_links, q_env_actions, q_reward)
+        memory.append(copy.deepcopy(experience_q))
+
+        time_eval = (time.perf_counter() - start_eval_time) * 1000
+        time_eval_sum += time_eval
+
+        # ################### 训练模式 ###################
+        time_train_start = time.perf_counter()
+        if len(memory) > batch_size:
+            batch_samples = random.sample(memory, batch_size)
+            
+            batch = random.sample(memory, batch_size)
+            eval_link_attr, eval_path_attr, eval_mask, exp_rewards = zip(*batch)
+
+            # 训练模式
+            model.train()
+            eval_q_values = model(torch.tensor(eval_link_attr, device=device), torch.tensor(eval_path_attr, device=device), torch.tensor(eval_mask, device=device))
+            target_q_values = torch.tensor(exp_rewards, device=device)
+            loss = nn.functional.mse_loss(eval_q_values, target_q_values)
+
+            optimizer.zero_grad()
+            loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+            with open(save_dir_output + "losses.txt", "a") as f:
+                f.write(f"{now_episode},{loss.item()}\n")
+        time_train = (time.perf_counter() - time_train_start) * 1000
+        time_train_sum += time_train
+        print(f"eval : {time_eval:.3f} ms")
+        print(f"train : {time_train:.3f} ms")
 
 except KeyboardInterrupt:
     print("Ctrl-C -> Exit")
 finally:
-    print_current_time()
+    print_current_time("end time")
+    print("Training finished.")
+    print(f"Total episodes: {now_episode + 1}")
+    print(f"Avg eval : {time_eval_sum / (now_episode + 1):.3f} ms")
+    print(f"Avg train : {time_train_sum / (now_episode + 1):.3f} ms")
     print("Done")
